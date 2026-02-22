@@ -1,8 +1,10 @@
-﻿using Il2CppExitGames.Client.Photon;
+﻿using HarmonyLib;
+using Il2CppExitGames.Client.Photon;
 using Il2CppPhoton.Pun;
 using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
 using Il2CppRUMBLE.Players;
+using Il2CppRUMBLE.Players.BootLoader;
 using MelonLoader;
 using RumbleModdingAPI;
 using System.Collections;
@@ -10,7 +12,7 @@ using UnityEngine;
 using Valve.OpenVR;
 using Player = Il2CppRUMBLE.Players.Player;
 
-[assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.1", "Orangenal", null)]
+[assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
 [assembly: MelonGame("Buckethead Entertainment", "RUMBLE")]
 
 namespace FullBodyBending
@@ -69,6 +71,7 @@ namespace FullBodyBending
             MelonLogger.Msg("Got here!2");
             string id = data[1].ToString();
             MelonLogger.Msg($"Got here!3");
+            MelonLogger.Msg($"Received view id {viewID} for tracker {id}");
 
             Transform Visuals = player.Controller.transform.GetChild(1).transform;
             MelonLogger.Msg("got here 3");
@@ -92,7 +95,8 @@ namespace FullBodyBending
             sphere.transform.localPosition = Vector3.zero;
             sphere.GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
             sphere.GetComponent<SphereCollider>().enabled = false;
-            sphere.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
+            //sphere.GetComponent<MeshRenderer>().enabled = false;
+            sphere.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
 
             MelonLogger.Msg("got here 6");
 
@@ -171,7 +175,7 @@ namespace FullBodyBending
             }
 
             sphere.transform.GetChild(0).localPosition = Vector3.zero;
-            if (id.ToString().EndsWith("knee") || id.ToString().EndsWith("elbow"))
+            if (id.ToString().EndsWith("knee"))
             {
                 sphere.transform.GetChild(0).localPosition = new Vector3(0, 0, 0.5f);
             }
@@ -238,7 +242,7 @@ namespace FullBodyBending
                     sphere.transform.localPosition = Vector3.zero;
                     sphere.GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
                     sphere.GetComponent<SphereCollider>().enabled = false;
-                    sphere.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
+                    sphere.transform.localScale = new Vector3(0.2f, 0.2f, 0.2f);
 
                     //GameObject square = GameObject.CreatePrimitive(PrimitiveType.Cube);
                     //square.transform.localScale = new Vector3(0.1f, 0.1f, 1f);
@@ -261,7 +265,7 @@ namespace FullBodyBending
                     if (numPlayers > 1)
                     {
                         MelonLogger.Msg($"{numPlayers} players in lobby");
-                        nextViewID += numPlayers * 6;
+                        nextViewID += numPlayers * 8;
                     }
 
                     PhotonView pv = sphere.AddComponent<PhotonView>();
@@ -347,7 +351,7 @@ namespace FullBodyBending
                     sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(0, -30, 0));
 
                     // Prevent knees and elbows bending backwards
-                    if (id.ToString().EndsWith("knee") || id.ToString().EndsWith("elbow"))
+                    if (id.ToString().EndsWith("knee"))
                     {
                         sphere.transform.GetChild(0).localPosition = sphere.transform.GetChild(0).forward;
                     }
@@ -359,6 +363,12 @@ namespace FullBodyBending
 
                     spheres.Add(sphere);
                     trackerIndices.Add(i); // Store tracker index, not pose
+                }
+            }
+            foreach (GameObject obj in new List<GameObject>() { chest, pelvis, LKnee, RKnee, LFoot, RFoot, LElbow, RElbow }) {
+                if (obj.transform.parent == null)
+                {
+                    GameObject.Destroy(obj);
                 }
             }
         }
@@ -472,12 +482,12 @@ namespace FullBodyBending
         }
     }
 
-    //[HarmonyPatch(typeof(BootLoaderMeasurementSystem), nameof(BootLoaderMeasurementSystem.DoMeasurement))]
-    //public static class Patch
-    //{
-    //    private static void Postfix()
-    //    {
-    //        MelonLogger.Msg("Do the mesauremtnet");
-    //    }
-    //}
+    [HarmonyPatch(typeof(BootLoaderMeasurementSystem), nameof(BootLoaderMeasurementSystem.DoMeasurement))]
+    public static class Patch
+    {
+        private static void Postfix()
+        {
+            MelonLogger.Msg("Do the mesauremtnet");
+        }
+    }
 }
