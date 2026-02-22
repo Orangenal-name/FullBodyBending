@@ -1,20 +1,21 @@
-﻿using HarmonyLib;
+﻿using Il2CppExitGames.Client.Photon;
 using Il2CppPhoton.Pun;
+using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
-using Il2CppRUMBLE.Players.BootLoader;
-using Il2CppRUMBLE.Players.Subsystems;
-using Il2CppRUMBLE.Poses;
+using Il2CppRUMBLE.Players;
 using MelonLoader;
 using RumbleModdingAPI;
+using System.Collections;
 using UnityEngine;
 using Valve.OpenVR;
+using Player = Il2CppRUMBLE.Players.Player;
 
-[assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
+[assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.1", "Orangenal", null)]
 [assembly: MelonGame("Buckethead Entertainment", "RUMBLE")]
 
 namespace FullBodyBending
 {
-    public class Core : MelonMod
+    public class Core : Calls.Utilities.RumbleMod
     {
         List<GameObject> spheres;
         public static List<uint> trackerIndices = new List<uint>();
@@ -27,9 +28,12 @@ namespace FullBodyBending
         GameObject RFoot;
         GameObject LKnee;
         GameObject LFoot;
+        GameObject RElbow;
+        GameObject LElbow;
 
-        public static Vector3 pelvisPositionOffset = new Vector3(0, 5, 0);
-        public static Vector3 pelvisRotationOffset = new Vector3(0, 180, 0);
+        int nextViewID = 138664;
+        private static RaiseEventOptions REOptions = new() { Receivers = ReceiverGroup.Others, CachingOption = EventCaching.AddToRoomCache };
+
         public override void OnInitializeMelon()
         {
             var error = EVRInitError.None;
@@ -40,15 +44,164 @@ namespace FullBodyBending
                 MelonLogger.Error($"OpenVR Init failed: {error}");
                 return;
             }
-            LoggerInstance.Msg("Initialised.");
             Calls.onMapInitialized += OnSceneWasLoaded;
+
+            LoggerInstance.Msg("Initialised.");
+        }
+
+        public override void OnEvent(List<Il2CppSystem.Object> data)
+        {
+            MelonCoroutines.Start(DelayedEvent(data));
+        }
+
+        IEnumerator DelayedEvent(List<Il2CppSystem.Object> data)
+        {
+            while (Calls.Players.GetAllPlayers().Count <= 1) yield return null;
+
+            Int16 actorNo = data[0].Unbox<Int16>();
+            int viewID = data[2].Unbox<int>();
+
+            MelonLogger.Msg("Got here!");
+            MelonLogger.Msg($"Actor No: {actorNo}");
+            Player player = Calls.Players.GetPlayerByActorNo(actorNo);
+            MelonLogger.Msg(Calls.Players.GetAllPlayers().Count);
+            MelonLogger.Msg(player == null);
+            MelonLogger.Msg("Got here!2");
+            string id = data[1].ToString();
+            MelonLogger.Msg($"Got here!3");
+
+            Transform Visuals = player.Controller.transform.GetChild(1).transform;
+            MelonLogger.Msg("got here 3");
+            Transform originalPelvis = Visuals.GetChild(1).GetChild(0);
+
+            chest = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).gameObject);
+            pelvis = GameObject.Instantiate(originalPelvis.gameObject);
+            RKnee = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).gameObject);
+            LKnee = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).gameObject);
+            RFoot = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).GetChild(0).gameObject);
+            LFoot = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).GetChild(0).gameObject);
+            RElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(2).GetChild(0).GetChild(0).gameObject);
+            LElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(1).GetChild(0).GetChild(0).gameObject);
+
+            MelonLogger.Msg("got here 4");
+
+            vrik = Visuals.GetComponent<VRIK>();
+            MelonLogger.Msg("got here 5");
+            GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            sphere.transform.SetParent(player.Controller.transform.GetChild(2));
+            sphere.transform.localPosition = Vector3.zero;
+            sphere.GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
+            sphere.GetComponent<SphereCollider>().enabled = false;
+            sphere.transform.localScale = new Vector3(0.25f, 0.25f, 0.25f);
+
+            MelonLogger.Msg("got here 6");
+
+            PhotonView pv = sphere.AddComponent<PhotonView>();
+            pv.ViewID = viewID;
+            nextViewID = viewID + 1;
+
+            PhotonTransformView transformView = sphere.AddComponent<PhotonTransformView>();
+            pv.ObservedComponents = new();
+            pv.ObservedComponents.Add(transformView);
+
+            if (id.ToString().EndsWith("chest"))
+            {
+                chest.transform.SetParent(sphere.transform);
+                vrik.solver.spine.chestGoal = chest.transform;
+                vrik.solver.spine.chestGoalWeight = 1f;
+                //GameObject.Destroy(sphere);
+                //continue;
+            }
+            else if (id.ToString().EndsWith("waist"))
+            {
+                pelvis.transform.SetParent(sphere.transform);
+                vrik.solver.spine.pelvisTarget = pelvis.transform;
+                vrik.solver.spine.pelvisPositionWeight = 1f;
+                vrik.solver.spine.pelvisRotationWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("right_foot"))
+            {
+                RFoot.transform.SetParent(sphere.transform);
+                vrik.solver.rightLeg.target = RFoot.transform;
+                vrik.solver.rightLeg.positionWeight = 1f;
+                //vrik.solver.rightLeg.rotationWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("left_foot"))
+            {
+                LFoot.transform.SetParent(sphere.transform);
+                vrik.solver.leftLeg.target = LFoot.transform;
+                vrik.solver.leftLeg.positionWeight = 1f;
+                //vrik.solver.rightLeg.rotationWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("right_knee"))
+            {
+                RKnee.transform.SetParent(sphere.transform);
+                vrik.solver.rightLeg.bendGoal = RKnee.transform;
+                vrik.solver.rightLeg.bendGoalWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("left_knee"))
+            {
+                LKnee.transform.SetParent(sphere.transform);
+                vrik.solver.leftLeg.bendGoal = LKnee.transform;
+                vrik.solver.leftLeg.bendGoalWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("left_elbow"))
+            {
+                LElbow.transform.SetParent(sphere.transform);
+                vrik.solver.leftArm.bendGoal = LElbow.transform;
+                vrik.solver.leftArm.bendGoalWeight = 1f;
+            }
+            else if (id.ToString().EndsWith("right_elbow"))
+            {
+                RElbow.transform.SetParent(sphere.transform);
+                vrik.solver.rightArm.bendGoal = RElbow.transform;
+                vrik.solver.rightArm.bendGoalWeight = 1f;
+            }
+
+            else if (id.ToString() == "liv_virtualcamera")
+            {
+                GameObject.Destroy(sphere);
+                yield break;
+            }
+            else
+            {
+                MelonLogger.Msg($"Unknown tracker id: {id}");
+                GameObject.Destroy(sphere);
+                yield break;
+            }
+
+            sphere.transform.GetChild(0).localPosition = Vector3.zero;
+            if (id.ToString().EndsWith("knee") || id.ToString().EndsWith("elbow"))
+            {
+                sphere.transform.GetChild(0).localPosition = new Vector3(0, 0, 0.5f);
+            }
+
+            if (id.ToString().EndsWith("foot"))
+            {
+                sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(90, -30, 0));
+            }
+
+            sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(0, -30, 0));
+            yield break;
+        }
+
+        public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
+        {
+            spheres = [];
+            trackerIndices = [];
         }
 
         public void OnSceneWasLoaded()
         {
-            string sceneName = Calls.Scene.GetSceneName();
             spheres = [];
             trackerIndices = [];
+            string sceneName = Calls.Scene.GetSceneName();
+
+            if (sceneName == "Gym")
+            {
+                RegisterEvents();
+            }
+
             if (sceneName == "Loader") return;
             MelonLogger.Msg("got here 2");
             Transform Visuals = Calls.Players.GetLocalPlayer().Controller.transform.GetChild(1).transform;
@@ -61,6 +214,8 @@ namespace FullBodyBending
             LKnee = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).gameObject);
             RFoot = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).GetChild(0).gameObject);
             LFoot = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).GetChild(0).gameObject);
+            RElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(2).GetChild(0).GetChild(0).gameObject);
+            LElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(1).GetChild(0).GetChild(0).gameObject);
             MelonLogger.Msg("got here 4");
 
             //Visuals.GetChild(2).gameObject.active = false;
@@ -102,48 +257,79 @@ namespace FullBodyBending
                         id, 64, ref error
                     );
 
-                    MelonLogger.Msg($"tracker: {i} id: {id}");
+                    int numPlayers = Calls.Players.GetAllPlayers().Count;
+                    if (numPlayers > 1)
+                    {
+                        MelonLogger.Msg($"{numPlayers} players in lobby");
+                        nextViewID += numPlayers * 6;
+                    }
+
+                    PhotonView pv = sphere.AddComponent<PhotonView>();
+                    pv.ViewID = nextViewID;
+                    nextViewID++;
+
+                    PhotonTransformView transformView = sphere.AddComponent<PhotonTransformView>();
+                    pv.ObservedComponents = new();
+                    pv.ObservedComponents.Add(transformView);
+
+                    List<Il2CppSystem.Object> data = new();
+                    data.Add(Calls.Players.GetLocalPlayer().Data.GeneralData.ActorNo);
+                    data.Add(id.ToString());
+                    data.Add(nextViewID - 1);
+                    RaiseEvent(data, REOptions, SendOptions.SendReliable);
 
                     if (id.ToString().EndsWith("chest"))
                     {
-                        chest.transform.SetParent(sphere.transform, false);
+                        chest.transform.SetParent(sphere.transform);
                         vrik.solver.spine.chestGoal = chest.transform;
                         vrik.solver.spine.chestGoalWeight = 1f;
                         //GameObject.Destroy(sphere);
                         //continue;
                     }
-                    if (id.ToString().EndsWith("waist"))
+                    else if (id.ToString().EndsWith("waist"))
                     {
-                        pelvis.transform.SetParent(sphere.transform, false);
+                        pelvis.transform.SetParent(sphere.transform);
                         vrik.solver.spine.pelvisTarget = pelvis.transform;
                         vrik.solver.spine.pelvisPositionWeight = 1f;
                         vrik.solver.spine.pelvisRotationWeight = 1f;
                     }
                     else if (id.ToString().EndsWith("right_foot"))
                     {
-                        RFoot.transform.SetParent(sphere.transform, false);
+                        RFoot.transform.SetParent(sphere.transform);
                         vrik.solver.rightLeg.target = RFoot.transform;
                         vrik.solver.rightLeg.positionWeight = 1f;
-                        //vrik.solver.rightLeg.rotationWeight = 1f;
+                        vrik.solver.rightLeg.rotationWeight = 1f;
                     }
                     else if (id.ToString().EndsWith("left_foot"))
                     {
-                        LFoot.transform.SetParent(sphere.transform, false);
+                        LFoot.transform.SetParent(sphere.transform);
                         vrik.solver.leftLeg.target = LFoot.transform;
                         vrik.solver.leftLeg.positionWeight = 1f;
-                        //vrik.solver.rightLeg.rotationWeight = 1f;
+                        vrik.solver.leftLeg.rotationWeight = 1f;
                     }
                     else if (id.ToString().EndsWith("right_knee"))
                     {
-                        RKnee.transform.SetParent(sphere.transform, false);
+                        RKnee.transform.SetParent(sphere.transform);
                         vrik.solver.rightLeg.bendGoal = RKnee.transform;
                         vrik.solver.rightLeg.bendGoalWeight = 1f;
                     }
                     else if (id.ToString().EndsWith("left_knee"))
                     {
-                        LKnee.transform.SetParent(sphere.transform, false);
+                        LKnee.transform.SetParent(sphere.transform);
                         vrik.solver.leftLeg.bendGoal = LKnee.transform;
                         vrik.solver.leftLeg.bendGoalWeight = 1f;
+                    }
+                    else if (id.ToString().EndsWith("left_elbow"))
+                    {
+                        LElbow.transform.SetParent(sphere.transform);
+                        vrik.solver.leftArm.bendGoal = LElbow.transform;
+                        vrik.solver.leftArm.bendGoalWeight = 1f;
+                    }
+                    else if (id.ToString().EndsWith("right_elbow"))
+                    {
+                        RElbow.transform.SetParent(sphere.transform);
+                        vrik.solver.rightArm.bendGoal = RElbow.transform;
+                        vrik.solver.rightArm.bendGoalWeight = 1f;
                     }
 
                     else if (id.ToString() == "liv_virtualcamera")
@@ -154,9 +340,23 @@ namespace FullBodyBending
                     else
                     {
                         MelonLogger.Msg($"Unknown tracker id: {id}");
+                        GameObject.Destroy(sphere);
+                        continue;
                     }
                     sphere.transform.GetChild(0).localPosition = Vector3.zero;
                     sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(0, -30, 0));
+
+                    // Prevent knees and elbows bending backwards
+                    if (id.ToString().EndsWith("knee") || id.ToString().EndsWith("elbow"))
+                    {
+                        sphere.transform.GetChild(0).localPosition = sphere.transform.GetChild(0).forward;
+                    }
+
+                    if (id.ToString().EndsWith("foot"))
+                    {
+                        sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(90, -30, 0));
+                    }
+
                     spheres.Add(sphere);
                     trackerIndices.Add(i); // Store tracker index, not pose
                 }
@@ -165,7 +365,7 @@ namespace FullBodyBending
 
         public override void OnLateUpdate()
         {
-            if (spheres != null && trackerIndices != null && system != null)
+            if (spheres.Count > 0 && trackerIndices.Count > 0 && system != null)
             {
                 var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
                 system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
