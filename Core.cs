@@ -53,7 +53,6 @@ namespace FullBodyBending
 
         internal static int SpawnTracker(PlayerController playerController, string trackerID, bool isOwn, int ownerActorNo = -1, int viewID = -1, bool debug = true)
         {
-            MelonLogger.Msg("spawning tracker");
             string sceneName = Calls.Scene.GetSceneName();
             Transform Visuals = playerController.transform.Find("Visuals");
             VRIK vrik = Visuals.GetComponent<VRIK>();
@@ -135,7 +134,7 @@ namespace FullBodyBending
                 LFoot.transform.SetParent(sphere.transform);
                 vrik.solver.leftLeg.target = LFoot.transform;
                 vrik.solver.leftLeg.positionWeight = 1f;
-                vrik.solver.rightLeg.rotationWeight = 1f;
+                vrik.solver.leftLeg.rotationWeight = 1f;
 
                 shortID = "lfoot";
                 bone = LFoot;
@@ -201,25 +200,28 @@ namespace FullBodyBending
                     bone.transform.localPosition = offsets[shortID].Item1;
                 }
             }
-            
+
 
             //sphere.transform.GetChild(0).localPosition = Vector3.zero;
             sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(0, -30, 0));
 
             if (trackerID.EndsWith("knee") || trackerID.EndsWith("elbow"))
             {
-                sphere.transform.GetChild(0).localPosition += sphere.transform.GetChild(0).TransformDirection(new Vector3(0, 0, 0.5f));
+                sphere.transform.GetChild(0).localPosition += sphere.transform.GetChild(0).transform.forward;
             }
 
             if (trackerID.EndsWith("foot"))
             {
-                sphere.transform.GetChild(0).Rotate(new Vector3(90, -30, 0));
+                sphere.transform.GetChild(0).Rotate(new Vector3(90, 0, 0));
             }
             MelonLogger.Msg(spheres == null);
             if (isOwn)
             {
                 spheres.Add(sphere);
             }
+
+            //sphere.transform.GetChild(0).localRotation = Quaternion.Euler(Vector3.zero);
+            //sphere.transform.GetChild(0).localPosition = Vector3.zero;
 
             if (ownerActorNo != -1)
             {
@@ -267,17 +269,20 @@ namespace FullBodyBending
 
         public void OnSceneWasLoaded(string sceneName)
         {
-            MelonLogger.Msg($"{sceneName} loaded");
             spheres = [];
             trackerIndices = [];
             Player localPlayer = Calls.Players.GetLocalPlayer();
 
-            if (!EventsRegisted)
-            {
-                RegisterEvents();
-            }
+            
+            RegisterEvents();
 
             if (sceneName == "Loader") return;
+
+            if (offsets.Count == 0)
+            {
+                MelonLogger.Warning("No offsets set! Please T-Pose to enable full body tracking!");
+                return;
+            }
 
             int numPlayers = Calls.Players.GetAllPlayers().Count;
             if (numPlayers > 1)
@@ -346,80 +351,82 @@ namespace FullBodyBending
                         Vector3 up = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
 
                         spheres[i].transform.localRotation = Quaternion.LookRotation(forward, up) * Quaternion.Euler(0, 225, 0);
-
-                        //if (id.ToString().EndsWith("chest"))
-                        //{
-                        //    var matrix2 = poses[index].mDeviceToAbsoluteTracking;
-                        //    Vector3 position2 = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        //    chest.transform.localPosition = position;
-
-                        //    Vector3 forward2 = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        //    Vector3 up2 = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        //    chest.transform.rotation = Quaternion.LookRotation(forward, up);
-                        //}
-                        //if (id.ToString().EndsWith("waist"))
-                        //{
-                        //    var matrix3 = poses[index].mDeviceToAbsoluteTracking;
-                        //    Vector3 position3 = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        //    pelvis.transform.localPosition = position - pelvisPositionOffset;
-
-                        //    Vector3 forward3 = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        //    Vector3 up3 = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        //    pelvis.transform.rotation = Quaternion.LookRotation(forward, up);
-                        //    Vector3 rotation = pelvis.transform.rotation.eulerAngles;
-                        //    rotation += pelvisRotationOffset;
-                        //    pelvis.transform.rotation = Quaternion.Euler(rotation);
-                        //}
-                        //else if (id.ToString().EndsWith("right_foot"))
-                        //{
-                        //    var matrix3 = poses[index].mDeviceToAbsoluteTracking;
-                        //    Vector3 position3 = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        //    RFoot.transform.localPosition = position - pelvisPositionOffset;
-
-                        //    Vector3 forward3 = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        //    Vector3 up3 = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        //    RFoot.transform.rotation = Quaternion.LookRotation(forward, up);
-                        //    //Vector3 rotation = RFoot.transform.rotation.eulerAngles;
-                        //    //rotation += pelvisRotationOffset;
-                        //    //RFoot.transform.rotation = Quaternion.Euler(rotation);
-                        //}
-                        //else if (id.ToString().EndsWith("left_foot"))
-                        //{
-                        //    var matrix3 = poses[index].mDeviceToAbsoluteTracking;
-                        //    Vector3 position3 = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        //    LFoot.transform.localPosition = position - pelvisPositionOffset;
-
-                        //    Vector3 forward3 = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        //    Vector3 up3 = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        //    LFoot.transform.rotation = Quaternion.LookRotation(forward, up);
-                        //    //Vector3 rotation = RFoot.transform.rotation.eulerAngles;
-                        //    //rotation += pelvisRotationOffset;
-                        //    //RFoot.transform.rotation = Quaternion.Euler(rotation);
-                        //}
-                        //else if (id.ToString().EndsWith("right_knee"))
-                        //{
-                        //    var matrix3 = poses[index].mDeviceToAbsoluteTracking;
-                        //    Vector3 position3 = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        //    RKnee.transform.localPosition = position - pelvisPositionOffset;
-
-                        //    Vector3 forward3 = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        //    Vector3 up3 = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        //    RKnee.transform.rotation = Quaternion.LookRotation(forward, up);
-                        //    //Vector3 rotation = RFoot.transform.rotation.eulerAngles;
-                        //    //rotation += pelvisRotationOffset;
-                        //    //RFoot.transform.rotation = Quaternion.Euler(rotation);
-                        //}
                     }
+                }
+            }
+        }
+
+        internal static void Calibrate(Transform activeSkeleton)
+        {
+            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().transform.GetChild(1).GetChild(1));
+
+            compareSkelington.transform.position = activeSkeleton.transform.position;
+
+            foreach (GameObject sphere in Core.spheres)
+            {
+                if (sphere.name.EndsWith("chest"))
+                {
+                    Transform compareChest = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0);
+                    Vector3 chestOffsetPos = compareChest.localPosition - sphere.transform.localPosition;
+                    Quaternion chestOffsetRot = compareChest.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("chest", (chestOffsetPos, chestOffsetRot));
+                }
+                else if (sphere.name.EndsWith("waist"))
+                {
+                    Transform compareWaist = compareSkelington.transform.GetChild(0);
+                    Vector3 waistOffsetPos = compareWaist.localPosition - sphere.transform.localPosition;
+                    Quaternion waistOffsetRot = compareWaist.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("waist", (waistOffsetPos, waistOffsetRot));
+                }
+                else if (sphere.name.EndsWith("right_foot"))
+                {
+                    Transform compareRFoot = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0).GetChild(0);
+                    Vector3 RFootOffsetPos = compareRFoot.localPosition - sphere.transform.localPosition;
+                    Quaternion RFootOffsetRot = compareRFoot.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("rfoot", (RFootOffsetPos, RFootOffsetRot));
+                }
+                else if (sphere.name.EndsWith("left_foot"))
+                {
+                    Transform compareLFoot = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0).GetChild(0);
+                    Vector3 LFootOffsetPos = compareLFoot.localPosition - sphere.transform.localPosition;
+                    Quaternion LFootOffsetRot = compareLFoot.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("lfoot", (LFootOffsetPos, LFootOffsetRot));
+                }
+                else if (sphere.name.EndsWith("right_knee"))
+                {
+                    Transform compareRKnee = compareSkelington.transform.GetChild(0).GetChild(3).GetChild(0);
+                    Vector3 RKneeOffsetPos = compareRKnee.localPosition - sphere.transform.localPosition;
+                    Quaternion RKneeOffsetRot = compareRKnee.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("rknee", (RKneeOffsetPos, RKneeOffsetRot));
+                }
+                else if (sphere.name.EndsWith("left_knee"))
+                {
+                    Transform compareLKnee = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0);
+                    Vector3 LKneeOffsetPos = compareLKnee.localPosition - sphere.transform.localPosition;
+                    Quaternion LKneeOffsetRot = compareLKnee.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("lknee", (LKneeOffsetPos, LKneeOffsetRot));
+                }
+                else if (sphere.name.EndsWith("right_elbow"))
+                {
+                    Transform compareRElbow = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0).GetChild(2).GetChild(0).GetChild(0);
+                    Vector3 RElbowOffsetPos = compareRElbow.localPosition - sphere.transform.localPosition;
+                    Quaternion RElbowOffsetRot = compareRElbow.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("relbow", (RElbowOffsetPos, RElbowOffsetRot));
+                }
+                else if (sphere.name.EndsWith("left_elbow"))
+                {
+                    Transform compareLElbow = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0).GetChild(1).GetChild(0).GetChild(0);
+                    Vector3 LElbowOffsetPos = compareLElbow.localPosition - sphere.transform.localPosition;
+                    Quaternion LelbowOffsetRot = compareLElbow.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
+
+                    Core.offsets.Add("lelbow", (LElbowOffsetPos, LelbowOffsetRot));
                 }
             }
         }
@@ -430,79 +437,10 @@ namespace FullBodyBending
     {
         private static void Postfix(ref BootLoaderMeasurementSystem __instance)
         {
-            MelonLogger.Msg("Do the mesauremtnet");
-            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().transform.GetChild(1).GetChild(1));
+            MelonLogger.Msg("Calibrating FBT");
             Transform activeSkeleton = __instance.transform.GetChild(0).GetChild(2);
 
-            compareSkelington.transform.position = activeSkeleton.transform.position;
-
-            foreach (GameObject sphere in Core.spheres)
-            {
-                if (sphere.name.EndsWith("chest"))
-                {
-                    Transform compareChest = compareSkelington.transform.GetChild(0).GetChild(3).GetChild(0);
-                    Vector3 chestOffsetPos = compareChest.position - sphere.transform.position;
-                    Quaternion chestOffsetRot = compareChest.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("chest", (chestOffsetPos, chestOffsetRot));
-                }
-                else if (sphere.name.EndsWith("waist"))
-                {
-                    Transform compareWaist = compareSkelington.transform.GetChild(0);
-                    Vector3 waistOffsetPos = compareWaist.position - sphere.transform.position;
-                    Quaternion waistOffsetRot = compareWaist.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("waist", (waistOffsetPos, waistOffsetRot));
-                }
-                else if (sphere.name.EndsWith("right_foot"))
-                {
-                    Transform compareRFoot = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0).GetChild(0);
-                    Vector3 RFootOffsetPos = compareRFoot.position - sphere.transform.position;
-                    Quaternion RFootOffsetRot = compareRFoot.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("rfoot", (RFootOffsetPos, RFootOffsetRot));
-                }
-                else if (sphere.name.EndsWith("left_foot"))
-                {
-                    Transform compareLFoot = compareSkelington.transform.GetChild(0).GetChild(1).GetChild(0).GetChild(0);
-                    Vector3 LFootOffsetPos = compareLFoot.position - sphere.transform.position;
-                    Quaternion LFootOffsetRot = compareLFoot.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("lfoot", (LFootOffsetPos, LFootOffsetRot));
-                }
-                else if (sphere.name.EndsWith("right_knee"))
-                {
-                    Transform compareRKnee = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0);
-                    Vector3 RKneeOffsetPos = compareRKnee.position - sphere.transform.position;
-                    Quaternion RKneeOffsetRot = compareRKnee.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("rknee", (RKneeOffsetPos, RKneeOffsetRot));
-                }
-                else if (sphere.name.EndsWith("left_knee"))
-                {
-                    Transform compareLKnee = compareSkelington.transform.GetChild(0).GetChild(1).GetChild(0);
-                    Vector3 LKneeOffsetPos = compareLKnee.position - sphere.transform.position;
-                    Quaternion LKneeOffsetRot = compareLKnee.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("lknee", (LKneeOffsetPos, LKneeOffsetRot));
-                }
-                else if (sphere.name.EndsWith("right_elbow"))
-                {
-                    Transform compareRElbow = compareSkelington.transform.GetChild(0).GetChild(3).GetChild(0).GetChild(2).GetChild(0).GetChild(0);
-                    Vector3 RElbowOffsetPos = compareRElbow.position - sphere.transform.position;
-                    Quaternion RElbowOffsetRot = compareRElbow.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("relbow", (RElbowOffsetPos, RElbowOffsetRot));
-                }
-                else if (sphere.name.EndsWith("left_elbow"))
-                {
-                    Transform compareLElbow = compareSkelington.transform.GetChild(0).GetChild(3).GetChild(0).GetChild(1).GetChild(0).GetChild(0);
-                    Vector3 LElbowOffsetPos = compareLElbow.position - sphere.transform.position;
-                    Quaternion LelbowOffsetRot = compareLElbow.rotation * Quaternion.Inverse(sphere.transform.rotation);
-
-                    Core.offsets.Add("lelbow", (LElbowOffsetPos, LelbowOffsetRot));
-                }
-            }
+            Core.Calibrate(activeSkeleton);
         }
     }
 
@@ -525,8 +463,7 @@ namespace FullBodyBending
                         ETrackedDeviceProperty.Prop_ControllerType_String,
                         id, 64, ref propError
                     );
-                    MelonLogger.Msg("here");
-                    MelonLogger.Msg("not here");
+
                     int viewID = Core.SpawnTracker(__instance, id.ToString(), true, debug:true);
 
                     Core.trackerIndices.Add(i);
