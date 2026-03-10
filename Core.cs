@@ -362,15 +362,6 @@ namespace FullBodyBending
 
                 for (int i = 0; i < trackerIndices.Count; i++)
                 {
-                    var id = new System.Text.StringBuilder(64);
-                    ETrackedPropertyError error = new();
-
-                    OpenVR.System.GetStringTrackedDeviceProperty(
-                        (uint)i,
-                        ETrackedDeviceProperty.Prop_ControllerType_String,
-                        id, 64, ref error
-                    );
-
                     uint index = trackerIndices[i];
                     if (poses[index].bDeviceIsConnected && poses[index].bPoseIsValid)
                     {
