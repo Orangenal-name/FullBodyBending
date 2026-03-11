@@ -5,6 +5,7 @@ using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
+using Il2CppRUMBLE.Players.Subsystems;
 using MelonLoader;
 using RumbleModdingAPI.RMAPI;
 using UnityEngine;
@@ -50,6 +51,15 @@ namespace FullBodyBending
             TrackerManager.InitLocalTrackers();
         }
 
+        void SetBones(Transform a, Transform b)
+        {
+            for (int i = 0; i < a.childCount; i++)
+            {
+                SetBones(a.GetChild(i), b.GetChild(i));
+            }
+            a.localRotation = b.localRotation;
+        }
+
         public override void OnUpdate()
         {
             if (system == null || TrackerManager.trackers.Count == 0) return;
@@ -72,11 +82,12 @@ namespace FullBodyBending
         public static readonly string[] supportedTrackers = ["waist", "chest", "right_foot", "left_foot", "right_knee", "left_knee", "right_elbow", "left_elbow"];
 
         public static Dictionary<string, OpenVRTracker> trackers = new();
+        public static Dictionary<string, (Vector3, Quaternion)> storedOffsets = new();
 
         public static Dictionary<string, int[]> skeletonPaths = new() // Paths are child indexes after the pelvis bone
         {
             { "chest", [4, 0] },
-            { "right_foot",  [ 2, 0, 0 ] },
+            { "right_foot",  [ 3, 0, 0 ] },
             { "left_foot",   [ 2, 0, 0 ] },
             { "right_knee",  [ 3, 0 ] },
             { "left_knee",   [ 2, 0 ] },
@@ -94,7 +105,7 @@ namespace FullBodyBending
                 {
                     GameObject trackerObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                     OpenVRTracker tracker = trackerObject.AddComponent<OpenVRTracker>();
-                    tracker.player = Calls.Players.GetLocalPlayer();
+                    tracker.playerController = Calls.Players.GetLocalPlayer().Controller;
                     tracker.trackerIndex = i;
                 }
             }
@@ -132,7 +143,7 @@ namespace FullBodyBending
     {
         // Need to be set when component is added
         public uint trackerIndex;
-        public Player player;
+        public PlayerController playerController;
         public Transform originalBone;
         public bool isVisible = true;
 
@@ -142,7 +153,7 @@ namespace FullBodyBending
         public string trackerName;
         public Transform IKTarget;
 
-        public bool offsetsSet = false;
+        private bool offsetsSet = false;
         public (Vector3, Quaternion) offsets;
 
         public OpenVRTracker(IntPtr ptr) : base(ptr) { }
@@ -171,7 +182,22 @@ namespace FullBodyBending
         // Allows for the same skeleton to be compared against multiple times when calibrating multiple trackers
         public void Calibrate(Transform compareSkelington)
         {
-            Transform activeSkeleton = player.Controller.PlayerVisuals.transform.GetChild(1);
+            Transform activeSkeleton = playerController.PlayerVisuals.transform.GetChild(1);
+            compareSkelington.position = activeSkeleton.position;
+            Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
+
+            Vector3 posOffset = compareBone.position - transform.position;
+            Quaternion rotOffset = compareBone.localRotation * Quaternion.Inverse(transform.localRotation);
+
+            offsets = (posOffset, rotOffset);
+            TrackerManager.storedOffsets.Add(trackerName, offsets);
+            offsetsSet = true;
+        }
+
+        //This is only for the loader because visuals are in a different spot
+        public void BootLoaderCalibrate(Transform compareSkelington)
+        {
+            Transform activeSkeleton = playerController.transform.GetChild(0).GetChild(2);
             compareSkelington.position = activeSkeleton.position;
             Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
 
@@ -179,6 +205,7 @@ namespace FullBodyBending
             Quaternion rotOffset = compareBone.rotation * Quaternion.Inverse(transform.rotation);
 
             offsets = (posOffset, rotOffset);
+            TrackerManager.storedOffsets.Add(trackerName, offsets);
             offsetsSet = true;
         }
 
@@ -204,7 +231,6 @@ namespace FullBodyBending
 
         public void AssignIK(bool unassign = false)
         {
-            PlayerController playerController = player.Controller;
             GameObject VisualsGO = playerController.PlayerVisuals.gameObject;
             IKSolverVR solver = VisualsGO.GetComponent<VRIK>().solver;
             string side = trackerName.Split("_")[0];
@@ -244,7 +270,7 @@ namespace FullBodyBending
 
         private void Start()
         {
-            transform.SetParent(player.Controller.PlayerVR.transform);
+            transform.SetParent(playerController.PlayerVR.transform);
             transform.localPosition = Vector3.zero;
             Destroy(GetComponent<SphereCollider>());
             if (isVisible)
@@ -286,19 +312,35 @@ namespace FullBodyBending
                 Destroy(gameObject); // We <3 self-immolation
             }
 
-            originalBone = TrackerManager.GetBone(trackerName, player.Controller.PlayerVisuals.transform.GetChild(1));
-
-            IKTarget = Instantiate(originalBone.gameObject).transform;
-            IKTarget.SetParent(transform);
-
-            // TODO: remove this once calibration is in
-            offsets.Item1 = Vector3.zero;
-            offsets.Item2 = Quaternion.Euler(Vector3.zero);
-            offsetsSet = true;
-
-            if (offsetsSet)
+            if (Calls.Scene.GetSceneName() != "Loader")
             {
-                AssignIK();
+                originalBone = TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1));
+
+                IKTarget = Instantiate(originalBone.gameObject).transform;
+                IKTarget.SetParent(transform);
+
+                IKTarget.localPosition = Vector3.zero;
+                IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
+
+                if (TrackerManager.storedOffsets.ContainsKey(trackerName))
+                {
+                    offsets = TrackerManager.storedOffsets[trackerName];
+                    offsetsSet = true;
+                }
+
+                if (offsetsSet)
+                {
+                    AssignIK();
+                }
+
+                if (trackerType == "knee" || trackerType == "elbow")
+                {
+                    transform.GetChild(0).localPosition += transform.GetChild(0).forward;
+                }
+                else if (trackerType == "foot")
+                {
+                    transform.GetChild(0).Rotate(new Vector3(-90, 0, 0));
+                }
             }
 
             TrackerManager.trackers.Add(trackerName, this);
@@ -310,7 +352,7 @@ namespace FullBodyBending
         }
     }
 
-    /*[HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
+    [HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
     public static class LoaderStartPatch
     {
         private static void Postfix(ref BootLoaderPlayer __instance)
@@ -321,18 +363,10 @@ namespace FullBodyBending
             {
                 if (OpenVR.System.GetTrackedDeviceClass(i) == ETrackedDeviceClass.GenericTracker)
                 {
-                    var id = new System.Text.StringBuilder(64);
-                    ETrackedPropertyError propError = new();
-
-                    OpenVR.System.GetStringTrackedDeviceProperty(
-                        i,
-                        ETrackedDeviceProperty.Prop_ControllerType_String,
-                        id, 64, ref propError
-                    );
-
-                    int viewID = Core.SpawnTracker(__instance, id.ToString(), true, debug: true);
-
-                    Core.trackerIndices.Add(i);
+                    GameObject trackerObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    OpenVRTracker tracker = trackerObject.AddComponent<OpenVRTracker>();
+                    tracker.playerController = __instance;
+                    tracker.trackerIndex = i;
                 }
             }
         }
@@ -349,10 +383,10 @@ namespace FullBodyBending
 
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                tracker.Calibrate(compareSkelington);
+                tracker.BootLoaderCalibrate(compareSkelington);
             }
 
             GameObject.Destroy(compareSkelington.gameObject);
         }
-    }*/
+    }
 }
