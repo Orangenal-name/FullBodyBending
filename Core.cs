@@ -1,22 +1,15 @@
 ﻿using HarmonyLib;
-using Il2CppExitGames.Client.Photon;
-using Il2CppInterop.Runtime.InteropTypes.Arrays;
-using Il2CppPhoton.Pun;
+using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.Injection;
 using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
 using MelonLoader;
 using RumbleModdingAPI.RMAPI;
-using System.Collections;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering;
-using UnityEngine.Playables;
-using UnityEngine.SceneManagement;
-using UnityEngine.UIElements;
 using Valve.OpenVR;
-using static Il2CppRootMotion.FinalIK.Grounding;
-using static RumbleModdingAPI.RMAPI.GameObjects.Gym.INTERACTABLES.Gondola.InteractiveBell.Stick;
+using static RumbleModdingAPI.RMAPI.GameObjects.Gym.INTERACTABLES.DressingRoom.PreviewPlayerController.Visuals;
 using Player = Il2CppRUMBLE.Players.Player;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
@@ -31,21 +24,9 @@ namespace FullBodyBending
         internal static List<GameObject> spheres;
         public static List<uint> trackerIndices = new List<uint>();
         internal static CVRSystem system;
+        private static TrackedDevicePose_t[] poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
 
-        public static float debugTrackerSize = 0.15f;
-
-        static GameObject chest;
-        static GameObject pelvis;
-        static GameObject RKnee;
-        static GameObject RFoot;
-        static GameObject LKnee;
-        static GameObject LFoot;
-        static GameObject RElbow;
-        static GameObject LElbow;
-
-        internal static Dictionary<string, (Vector3, Quaternion)> offsets = new();
-
-        private static RaiseEventOptions REOptions = new() { Receivers = ReceiverGroup.Others, CachingOption = EventCaching.AddToRoomCache };
+        internal static float debugTrackerSize = 0.15f;
 
         public override void OnInitializeMelon()
         {
@@ -64,433 +45,23 @@ namespace FullBodyBending
             LoggerInstance.Msg("Initialised.");
         }
 
-        internal static int SpawnTracker(PlayerController playerController, string trackerID, bool isOwn, int ownerActorNo = -1, int viewID = -1, bool debug = true)
-        {
-            string sceneName = Calls.Scene.GetSceneName();
-            Transform Visuals = playerController.transform.Find("Visuals");
-            VRIK vrik = Visuals.GetComponent<VRIK>();
-
-            Transform originalPelvis;
-
-            GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-
-            if (sceneName == "Loader")
-            {
-                MelonLogger.Msg("no problem");
-                originalPelvis = Visuals.GetChild(2).GetChild(0);
-                MelonLogger.Msg("perhaps problem?");
-                sphere.transform.SetParent(playerController.transform);
-            }
-            else
-            {
-                MelonLogger.Msg("problem");
-                originalPelvis = Visuals.GetChild(1).GetChild(0);
-                sphere.transform.SetParent(playerController.transform.GetChild(2));
-            }
-
-            float ballSize = 0.15f;
-
-            sphere.transform.localPosition = Vector3.zero;
-            sphere.GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
-            sphere.GetComponent<SphereCollider>().enabled = false;
-            sphere.transform.localScale = new Vector3(ballSize, ballSize, ballSize);
-            sphere.name = trackerID;
-
-            if (!debug)
-            {
-                sphere.GetComponent<MeshRenderer>().enabled = false;
-            }
-
-            string shortID;
-            GameObject bone;
-
-            if (trackerID.EndsWith("chest"))
-            {
-                if (sceneName != "Loader")
-                    chest = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).gameObject);
-                else chest = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).gameObject);
-                chest.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.spine.chestGoal = chest.transform;
-                    vrik.solver.spine.chestGoalWeight = 1f;
-                }
-
-                shortID = "chest";
-                bone = chest;
-
-                //GameObject.Destroy(sphere);
-                //continue;
-            }
-            else if (trackerID.EndsWith("waist"))
-            {
-                pelvis = GameObject.Instantiate(originalPelvis.gameObject);
-                pelvis.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.spine.pelvisTarget = pelvis.transform;
-                    vrik.solver.spine.pelvisPositionWeight = 1f;
-                    vrik.solver.spine.pelvisRotationWeight = 1f;
-                }
-
-                shortID = "waist";
-                bone = pelvis;
-            }
-            else if (trackerID.EndsWith("right_foot"))
-            {
-                RFoot = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).GetChild(0).gameObject);
-                RFoot.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.rightLeg.target = RFoot.transform;
-                    vrik.solver.rightLeg.positionWeight = 1f;
-                    vrik.solver.rightLeg.rotationWeight = 1f;
-                }
-
-                shortID = "rfoot";
-                bone = RFoot;
-            }
-            else if (trackerID.EndsWith("left_foot"))
-            {
-                LFoot = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).GetChild(0).gameObject);
-                LFoot.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.leftLeg.target = LFoot.transform;
-                    vrik.solver.leftLeg.positionWeight = 1f;
-                    vrik.solver.leftLeg.rotationWeight = 1f;
-                }
-
-                shortID = "lfoot";
-                bone = LFoot;
-            }
-            else if (trackerID.EndsWith("right_knee"))
-            {
-                RKnee = GameObject.Instantiate(originalPelvis.GetChild(3).GetChild(0).gameObject);
-                RKnee.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.rightLeg.bendGoal = RKnee.transform;
-                    vrik.solver.rightLeg.bendGoalWeight = 1f;
-                }
-
-                shortID = "rknee";
-                bone = RKnee;
-            }
-            else if (trackerID.EndsWith("left_knee"))
-            {
-                LKnee = GameObject.Instantiate(originalPelvis.GetChild(2).GetChild(0).gameObject);
-                LKnee.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.leftLeg.bendGoal = LKnee.transform;
-                    vrik.solver.leftLeg.bendGoalWeight = 1f;
-                }
-
-                shortID = "lknee";
-                bone = LKnee;
-            }
-            else if (trackerID.EndsWith("left_elbow"))
-            {
-                LElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(1).GetChild(0).GetChild(0).gameObject);
-                LElbow.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.leftArm.bendGoal = LElbow.transform;
-                    vrik.solver.leftArm.bendGoalWeight = 1f;
-                }
-
-                shortID = "lelbow";
-                bone = LElbow;
-            }
-            else if (trackerID.EndsWith("right_elbow"))
-            {
-                RElbow = GameObject.Instantiate(originalPelvis.GetChild(4).GetChild(0).GetChild(2).GetChild(0).GetChild(0).gameObject);
-                RElbow.transform.SetParent(sphere.transform);
-
-                if (offsets.Count > 0)
-                {
-                    vrik.solver.rightArm.bendGoal = RElbow.transform;
-                    vrik.solver.rightArm.bendGoalWeight = 1f;
-                }
-
-                shortID = "relbow";
-                bone = RElbow;
-            }
-
-            else if (trackerID == "liv_virtualcamera")
-            {
-                GameObject.Destroy(sphere);
-                return -1;
-            }
-            else
-            {
-                MelonLogger.Msg($"Unknown tracker id: {trackerID}");
-                GameObject.Destroy(sphere);
-                return -1;
-            }
-
-            if (shortID != null && bone != null)
-            {
-                if (offsets.ContainsKey(shortID))
-                {
-                    bone.transform.localRotation = offsets[shortID].Item2;
-                    bone.transform.localPosition = offsets[shortID].Item1;
-                }
-            }
-
-
-            //sphere.transform.GetChild(0).localPosition = Vector3.zero;
-            sphere.transform.GetChild(0).localRotation = Quaternion.Euler(new Vector3(0, -30, 0));
-
-            if (trackerID.EndsWith("knee") || trackerID.EndsWith("elbow"))
-            {
-                sphere.transform.GetChild(0).localPosition += sphere.transform.GetChild(0).transform.forward;
-            }
-
-            if (trackerID.EndsWith("foot"))
-            {
-                sphere.transform.GetChild(0).Rotate(new Vector3(90, 0, 0));
-            }
-            MelonLogger.Msg(spheres == null);
-            if (isOwn)
-            {
-                spheres.Add(sphere);
-            }
-
-            //sphere.transform.GetChild(0).localRotation = Quaternion.Euler(Vector3.zero);
-            //sphere.transform.GetChild(0).localPosition = Vector3.zero;
-
-            if (ownerActorNo != -1)
-            {
-                PhotonView pv = sphere.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
-                if (viewID == -1)
-                    pv.ViewID = PhotonNetwork.AllocateViewID(ownerActorNo);
-                else
-                    pv.ViewID = viewID;
-
-                PhotonTransformView transformView = sphere.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
-                pv.ObservedComponents = new();
-                pv.ObservedComponents.Add(transformView);
-                MelonLogger.Msg($"Correct actor no: {playerController.assignedPlayer.Data.GeneralData.ActorNo}/{ownerActorNo} Photon View owner: {pv.ownerActorNr}");
-                return pv.ViewID;
-            }
-
-            return -1;
-        }
-
-        public override void OnEvent(List<Il2CppSystem.Object> data)
-        {
-            MelonCoroutines.Start(DelayedEvent(data));
-        }
-
-        IEnumerator DelayedEvent(List<Il2CppSystem.Object> data)
-        {
-            while (Calls.Players.GetAllPlayers().Count <= 1) yield return null;
-
-            Int16 actorNo = data[0].Unbox<Int16>();
-            int viewID = data[2].Unbox<int>();
-
-            Player player = Calls.Players.GetPlayerByActorNo(actorNo);
-            string id = data[1].ToString();
-
-            MelonLogger.Msg($"Received view id {viewID} for tracker {id} from actor {actorNo}");
-
-            SpawnTracker(player.Controller, id, false, actorNo, viewID);
-        }
-
-        public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
-        {
-            spheres = [];
-            trackerIndices = [];
-        }
-
         public void OnSceneWasLoaded(string sceneName)
         {
-            spheres = [];
-            trackerIndices = [];
-            Player localPlayer = Calls.Players.GetLocalPlayer();
-            
-            RegisterEvents();
-
-            if (sceneName == "Loader") return;
-
-            if (offsets.Count == 0)
-            {
-                MelonLogger.Warning("No offsets set! Please T-Pose to enable full body tracking!");
-            }
-
-            int numPlayers = Calls.Players.GetAllPlayers().Count;
-            if (numPlayers > 1)
-            {
-                MelonLogger.Msg($"{numPlayers} players in lobby");
-            }
-
-            var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
-            system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
-            for (uint i = 0; i < poses.Length; i++)
-            {
-                if (OpenVR.System.GetTrackedDeviceClass(i) == ETrackedDeviceClass.GenericTracker)
-                {
-                    var id = new System.Text.StringBuilder(64);
-                    ETrackedPropertyError error = new();
-
-                    OpenVR.System.GetStringTrackedDeviceProperty(
-                        i,
-                        ETrackedDeviceProperty.Prop_ControllerType_String,
-                        id, 64, ref error
-                    );
-
-                    int actorNo = Calls.Players.GetLocalPlayer().Data.GeneralData.ActorNo;
-
-                    int viewID = SpawnTracker(localPlayer.Controller, id.ToString(), true, actorNo);
-                    trackerIndices.Add(i);
-
-                    if (viewID == -1 || sceneName == "Gym") continue;
-
-                    List<Il2CppSystem.Object> data = new();
-                    data.Add(actorNo);
-                    data.Add(id.ToString());
-                    data.Add(viewID);
-                    RaiseEvent(data, REOptions, SendOptions.SendReliable);
-                }
-            }
+            TrackerManager.InitLocalTrackers();
         }
 
-        public override void OnLateUpdate()
+        public override void OnUpdate()
         {
-            if (spheres.Count > 0 && trackerIndices.Count > 0 && system != null)
+            if (system == null || TrackerManager.trackers.Count == 0) return;
+            OpenVR.System.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
+
+            foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
-                system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
-
-                for (int i = 0; i < trackerIndices.Count; i++)
+                uint trackerIndex = tracker.trackerIndex;
+                if (poses[trackerIndex].bDeviceIsConnected && poses[trackerIndex].bPoseIsValid)
                 {
-                    uint index = trackerIndices[i];
-                    if (poses[index].bDeviceIsConnected && poses[index].bPoseIsValid)
-                    {
-                        var matrix = poses[index].mDeviceToAbsoluteTracking;
-                        Vector3 position = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
-
-                        spheres[i].transform.localPosition = position;
-
-                        Vector3 forward = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
-                        Vector3 up = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
-
-                        spheres[i].transform.localRotation = Quaternion.LookRotation(forward, up) * Quaternion.Euler(0, 225, 0);
-                    }
-                }
-            }
-        }
-
-        internal static void Calibrate(Transform activeSkeleton, bool update = false)
-        {
-            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().transform.GetChild(1).GetChild(1));
-            bool init = spheres.Count == 0;
-
-            compareSkelington.transform.position = activeSkeleton.transform.position;
-
-            foreach (GameObject sphere in spheres)
-            {
-                string key = "";
-                Vector3 offsetPos = new();
-                Quaternion offsetRot = new();
-                GameObject bone = null;
-                if (sphere.name.EndsWith("chest"))
-                {
-                    Transform compareChest = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0);
-                    offsetPos = compareChest.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareChest.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = chest;
-                    key = "chest";
-                }
-                else if (sphere.name.EndsWith("waist"))
-                {
-                    Transform compareWaist = compareSkelington.transform.GetChild(0);
-                    offsetPos = compareWaist.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareWaist.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = pelvis;
-                    key = "waist";
-                }
-                else if (sphere.name.EndsWith("right_foot"))
-                {
-                    Transform compareRFoot = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0).GetChild(0);
-                    offsetPos = compareRFoot.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareRFoot.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = RFoot;
-                    key = "rfoot";
-                }
-                else if (sphere.name.EndsWith("left_foot"))
-                {
-                    Transform compareLFoot = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0).GetChild(0);
-                    offsetPos = compareLFoot.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareLFoot.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = LFoot;
-                    key = "lfoot";
-                }
-                else if (sphere.name.EndsWith("right_knee"))
-                {
-                    Transform compareRKnee = compareSkelington.transform.GetChild(0).GetChild(3).GetChild(0);
-                    offsetPos = compareRKnee.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareRKnee.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = RKnee;
-                    key = "rknee";
-                }
-                else if (sphere.name.EndsWith("left_knee"))
-                {
-                    Transform compareLKnee = compareSkelington.transform.GetChild(0).GetChild(2).GetChild(0);
-                    offsetPos = compareLKnee.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareLKnee.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = LKnee;
-                    key = "lknee";
-                }
-                else if (sphere.name.EndsWith("right_elbow"))
-                {
-                    Transform compareRElbow = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0).GetChild(2).GetChild(0).GetChild(0);
-                    offsetPos = compareRElbow.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareRElbow.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = RElbow;
-                    key = "relbow";
-                }
-                else if (sphere.name.EndsWith("left_elbow"))
-                {
-                    Transform compareLElbow = compareSkelington.transform.GetChild(0).GetChild(4).GetChild(0).GetChild(1).GetChild(0).GetChild(0);
-                    offsetPos = compareLElbow.localPosition - sphere.transform.localPosition;
-                    offsetRot = compareLElbow.localRotation * Quaternion.Inverse(sphere.transform.localRotation);
-
-                    bone = LElbow;
-                    key = "lelbow";
-                }
-                else continue;
-
-                offsets.Add(key, (offsetPos, offsetRot));
-
-                if (update)
-                {
-                    if (init)
-                    {
-                        // TODO: Assign vrik solver targets and move bones back to trackers
-                        
-                    }
-                    else
-                    {
-                        bone.transform.localRotation = offsets[key].Item2;
-                        bone.transform.localPosition = offsets[key].Item1;
-                    }
+                    TrackedDevicePose_t pose = poses[tracker.trackerIndex];
+                    tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
                 }
             }
         }
@@ -501,9 +72,19 @@ namespace FullBodyBending
         public static readonly string[] supportedTrackers = ["waist", "chest", "right_foot", "left_foot", "right_knee", "left_knee", "right_elbow", "left_elbow"];
 
         public static Dictionary<string, OpenVRTracker> trackers = new();
-        private static TrackedDevicePose_t[] poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
 
-        public static void InitOwnTrackers()
+        public static Dictionary<string, int[]> skeletonPaths = new() // Paths are child indexes after the pelvis bone
+        {
+            { "chest", [4, 0] },
+            { "right_foot",  [ 2, 0, 0 ] },
+            { "left_foot",   [ 2, 0, 0 ] },
+            { "right_knee",  [ 3, 0 ] },
+            { "left_knee",   [ 2, 0 ] },
+            { "right_elbow", [ 4, 0, 2, 0, 0 ] },
+            { "left_elbow",  [ 4, 0, 1, 0, 0 ] },
+        }; // TODO: Re-implement bootloader trackers
+
+        public static void InitLocalTrackers()
         {
             var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
             Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
@@ -519,19 +100,21 @@ namespace FullBodyBending
             }
         }
 
-        internal static void Update()
+        public static Transform GetBone(string trackerName, Transform skeleton)
         {
-            OpenVR.System.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
+            Transform bone = skeleton.GetChild(0);
 
-            foreach (OpenVRTracker tracker in trackers.Values)
+            if (TrackerManager.skeletonPaths.ContainsKey(trackerName))
             {
-                uint trackerIndex = tracker.trackerIndex;
-                if (poses[trackerIndex].bDeviceIsConnected && poses[trackerIndex].bPoseIsValid)
+                int[] path = TrackerManager.skeletonPaths[trackerName];
+
+                foreach (int child in path)
                 {
-                    TrackedDevicePose_t pose = poses[tracker.trackerIndex];
-                    tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
+                    bone = bone.GetChild(child);
                 }
             }
+
+            return bone;
         }
 
         /* Every update:
@@ -551,12 +134,15 @@ namespace FullBodyBending
         public uint trackerIndex;
         public Player player;
         public Transform originalBone;
+        public bool isVisible = true;
 
         // Set in Start()
-        private string trackerType;
-        private string trackerName;
+        public string controllerType;
+        public string trackerType;
+        public string trackerName;
         public Transform IKTarget;
 
+        public bool offsetsSet = false;
         public (Vector3, Quaternion) offsets;
 
         public OpenVRTracker(IntPtr ptr) : base(ptr) { }
@@ -572,11 +158,101 @@ namespace FullBodyBending
             transform.localRotation = Quaternion.LookRotation(forward, up) * Quaternion.Euler(0, 225, 0);
         }
 
+        // Allows for individual trackers to be calibrated
+        public void Calibrate()
+        {
+            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
+
+            Calibrate(compareSkelington);
+
+            Destroy(compareSkelington.gameObject);
+        }
+
+        // Allows for the same skeleton to be compared against multiple times when calibrating multiple trackers
+        public void Calibrate(Transform compareSkelington)
+        {
+            Transform activeSkeleton = player.Controller.PlayerVisuals.transform.GetChild(1);
+            compareSkelington.position = activeSkeleton.position;
+            Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
+
+            Vector3 posOffset = compareBone.position - transform.position;
+            Quaternion rotOffset = compareBone.rotation * Quaternion.Inverse(transform.rotation);
+
+            offsets = (posOffset, rotOffset);
+            offsetsSet = true;
+        }
+
+        private void Elbow(string side, IKSolverVR solver, bool unassign)
+        {
+            IKSolverVR.Arm arm = side == "left" ? solver.leftArm : solver.rightArm;
+            arm.bendGoal = unassign ? null : IKTarget;
+            arm.bendGoalWeight = unassign ? 0 : 1;
+        }
+        private void Foot(string side, IKSolverVR solver, bool unassign)
+        {
+            IKSolverVR.Leg leg = side == "left" ? solver.leftLeg : solver.rightLeg;
+            leg.target = unassign ? null : IKTarget;
+            leg.positionWeight = unassign ? 0 : 1;
+            leg.rotationWeight = unassign ? 0 : 1;
+        }
+        private void Knee(string side, IKSolverVR solver, bool unassign)
+        {
+            IKSolverVR.Leg leg = side == "left" ? solver.leftLeg : solver.rightLeg;
+            leg.bendGoal = unassign ? null : IKTarget;
+            leg.bendGoalWeight = unassign ? 0 : 1;
+        }
+
+        public void AssignIK(bool unassign = false)
+        {
+            PlayerController playerController = player.Controller;
+            GameObject VisualsGO = playerController.PlayerVisuals.gameObject;
+            IKSolverVR solver = VisualsGO.GetComponent<VRIK>().solver;
+            string side = trackerName.Split("_")[0];
+
+            
+
+            switch (trackerType)
+            {
+                case "chest":
+                    solver.spine.chestGoal = unassign ? null : IKTarget;
+                    solver.spine.chestGoalWeight = unassign ? 0 : 1;
+                    break;
+                case "waist":
+                    solver.spine.pelvisTarget = unassign ? null : IKTarget;
+                    solver.spine.pelvisPositionWeight = unassign ? 0 : 1;
+                    solver.spine.pelvisRotationWeight = unassign ? 0 : 1;
+                    break;
+                case "foot":
+                    Foot(side, solver, unassign);
+                    break;
+                case "knee":
+                    Knee(side, solver, unassign);
+                    break;
+                case "elbow":
+                    Elbow(side, solver, unassign);
+                    break;
+            }
+
+            IKTarget.localPosition = Vector3.zero;
+            IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
+
+            if (!offsetsSet) return;
+
+            IKTarget.localPosition = offsets.Item1;
+            IKTarget.localRotation = offsets.Item2;
+        }
+
         private void Start()
         {
+            transform.SetParent(player.Controller.PlayerVR.transform);
+            transform.localPosition = Vector3.zero;
             Destroy(GetComponent<SphereCollider>());
-            GetComponent<MeshRenderer>().material.shader = Shader.Find("Unity Render Pipeline/Unlit");
-            transform.localScale = new Vector3(Core.debugTrackerSize, Core.debugTrackerSize, Core.debugTrackerSize);
+            if (isVisible)
+            {
+                GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
+                transform.localScale = new Vector3(Core.debugTrackerSize, Core.debugTrackerSize, Core.debugTrackerSize);
+            }
+            else Destroy(GetComponent<MeshRenderer>());
 
             System.Text.StringBuilder sb = new(64);
             ETrackedPropertyError error = new();
@@ -586,36 +262,55 @@ namespace FullBodyBending
                 sb, 64, ref error
             );
 
-            trackerType = sb.ToString();
-            gameObject.name = trackerType;
+            controllerType = sb.ToString();
+            gameObject.name = controllerType;
 
-            if (trackerType.EndsWith("chest") || trackerType.EndsWith("waist"))
+            if (controllerType.EndsWith("chest") || controllerType.EndsWith("waist"))
             {
-                trackerName = trackerType.Split("_").Last();
+                trackerName = controllerType.Split("_").Last();
+                trackerType = trackerName;
             }
             else
             {
-                string[] splitType = trackerType.Split("_");
+                string[] splitType = controllerType.Split("_");
                 trackerName = splitType[^2] + "_" + splitType[^1]; // CARATS!? IN MY INDEX!?!?!?
+                trackerType = splitType[^1];
             }
 
             if (!TrackerManager.supportedTrackers.Contains(trackerName))
             {
                 if (trackerName != "liv_virtualcamera")
                 {
-                    Core.loggerInstance.Warning($"Unrecognised tracker: {trackerType}");
+                    Core.loggerInstance.Warning($"Unrecognised tracker: {controllerType}");
                 }
                 Destroy(gameObject); // We <3 self-immolation
             }
 
+            originalBone = TrackerManager.GetBone(trackerName, player.Controller.PlayerVisuals.transform.GetChild(1));
+
             IKTarget = Instantiate(originalBone.gameObject).transform;
             IKTarget.SetParent(transform);
 
+            // TODO: remove this once calibration is in
+            offsets.Item1 = Vector3.zero;
+            offsets.Item2 = Quaternion.Euler(Vector3.zero);
+            offsetsSet = true;
+
+            if (offsetsSet)
+            {
+                AssignIK();
+            }
+
             TrackerManager.trackers.Add(trackerName, this);
+        }
+
+        private void OnDestroy()
+        {
+            TrackerManager.trackers.Remove(trackerName);
         }
     }
 
-    [HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
+    /*[HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
     public static class LoaderStartPatch
     {
         private static void Postfix(ref BootLoaderPlayer __instance)
@@ -635,7 +330,7 @@ namespace FullBodyBending
                         id, 64, ref propError
                     );
 
-                    int viewID = Core.SpawnTracker(__instance, id.ToString(), true, debug:true);
+                    int viewID = Core.SpawnTracker(__instance, id.ToString(), true, debug: true);
 
                     Core.trackerIndices.Add(i);
                 }
@@ -650,21 +345,14 @@ namespace FullBodyBending
         {
             MelonLogger.Msg("Calibrating FBT");
 
-            bool update = true;
-            Transform activeSkeleton;
+            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
 
-            if (Calls.Scene.GetSceneName() == "Loader")
+            foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                update = false;
-
-                activeSkeleton = SceneManager.GetActiveScene().GetRootGameObjects()[2].transform.GetChild(0).GetChild(0).GetChild(2);
-            }
-            else
-            {
-                activeSkeleton = __instance.Player.Controller.PlayerVisuals.transform.GetChild(1);
+                tracker.Calibrate(compareSkelington);
             }
 
-            Core.Calibrate(activeSkeleton, update);
+            GameObject.Destroy(compareSkelington.gameObject);
         }
-    }
+    }*/
 }
