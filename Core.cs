@@ -10,8 +10,13 @@ using MelonLoader;
 using RumbleModdingAPI.RMAPI;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
+using UnityEngine.Playables;
 using UnityEngine.SceneManagement;
+using UnityEngine.UIElements;
 using Valve.OpenVR;
+using static Il2CppRootMotion.FinalIK.Grounding;
+using static RumbleModdingAPI.RMAPI.GameObjects.Gym.INTERACTABLES.Gondola.InteractiveBell.Stick;
 using Player = Il2CppRUMBLE.Players.Player;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
@@ -21,9 +26,13 @@ namespace FullBodyBending
 {
     public class Core : Utilities.RumbleMod
     {
+        internal static MelonLogger.Instance loggerInstance;
+
         internal static List<GameObject> spheres;
         public static List<uint> trackerIndices = new List<uint>();
         internal static CVRSystem system;
+
+        public static float debugTrackerSize = 0.15f;
 
         static GameObject chest;
         static GameObject pelvis;
@@ -49,6 +58,8 @@ namespace FullBodyBending
                 return;
             }
             Actions.onMapInitialized += OnSceneWasLoaded;
+
+            loggerInstance = LoggerInstance;
 
             LoggerInstance.Msg("Initialised.");
         }
@@ -482,6 +493,125 @@ namespace FullBodyBending
                     }
                 }
             }
+        }
+    }
+
+    public static class TrackerManager
+    {
+        public static readonly string[] supportedTrackers = ["waist", "chest", "right_foot", "left_foot", "right_knee", "left_knee", "right_elbow", "left_elbow"];
+
+        public static Dictionary<string, OpenVRTracker> trackers = new();
+        private static TrackedDevicePose_t[] poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
+
+        public static void InitOwnTrackers()
+        {
+            var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
+            Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
+            for (uint i = 0; i < poses.Length; i++)
+            {
+                if (OpenVR.System.GetTrackedDeviceClass(i) == ETrackedDeviceClass.GenericTracker)
+                {
+                    GameObject trackerObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    OpenVRTracker tracker = trackerObject.AddComponent<OpenVRTracker>();
+                    tracker.player = Calls.Players.GetLocalPlayer();
+                    tracker.trackerIndex = i;
+                }
+            }
+        }
+
+        internal static void Update()
+        {
+            OpenVR.System.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
+
+            foreach (OpenVRTracker tracker in trackers.Values)
+            {
+                uint trackerIndex = tracker.trackerIndex;
+                if (poses[trackerIndex].bDeviceIsConnected && poses[trackerIndex].bPoseIsValid)
+                {
+                    TrackedDevicePose_t pose = poses[tracker.trackerIndex];
+                    tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
+                }
+            }
+        }
+
+        /* Every update:
+         * TrackedDevicePose_t[] poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
+         * OpenVR.System.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
+         * foreach (var tracker in trackerObjects)
+         * {
+         *      tracker.UpdatePose(poses);
+         * }
+         */
+    }
+
+    [RegisterTypeInIl2Cpp]
+    public class OpenVRTracker : MonoBehaviour
+    {
+        // Need to be set when component is added
+        public uint trackerIndex;
+        public Player player;
+        public Transform originalBone;
+
+        // Set in Start()
+        private string trackerType;
+        private string trackerName;
+        public Transform IKTarget;
+
+        public (Vector3, Quaternion) offsets;
+
+        public OpenVRTracker(IntPtr ptr) : base(ptr) { }
+
+        public void UpdateTransform(HmdMatrix34_t matrix)
+        {
+            Vector3 position = new Vector3(matrix.m3, matrix.m7, -matrix.m11);
+            transform.localPosition = position;
+
+            Vector3 forward = new Vector3(matrix.m2, matrix.m6, -matrix.m10);
+            Vector3 up = new Vector3(matrix.m1, matrix.m5, -matrix.m9);
+
+            transform.localRotation = Quaternion.LookRotation(forward, up) * Quaternion.Euler(0, 225, 0);
+        }
+
+        private void Start()
+        {
+            Destroy(GetComponent<SphereCollider>());
+            GetComponent<MeshRenderer>().material.shader = Shader.Find("Unity Render Pipeline/Unlit");
+            transform.localScale = new Vector3(Core.debugTrackerSize, Core.debugTrackerSize, Core.debugTrackerSize);
+
+            System.Text.StringBuilder sb = new(64);
+            ETrackedPropertyError error = new();
+            OpenVR.System.GetStringTrackedDeviceProperty(
+                trackerIndex,
+                ETrackedDeviceProperty.Prop_ControllerType_String,
+                sb, 64, ref error
+            );
+
+            trackerType = sb.ToString();
+            gameObject.name = trackerType;
+
+            if (trackerType.EndsWith("chest") || trackerType.EndsWith("waist"))
+            {
+                trackerName = trackerType.Split("_").Last();
+            }
+            else
+            {
+                string[] splitType = trackerType.Split("_");
+                trackerName = splitType[^2] + "_" + splitType[^1]; // CARATS!? IN MY INDEX!?!?!?
+            }
+
+            if (!TrackerManager.supportedTrackers.Contains(trackerName))
+            {
+                if (trackerName != "liv_virtualcamera")
+                {
+                    Core.loggerInstance.Warning($"Unrecognised tracker: {trackerType}");
+                }
+                Destroy(gameObject); // We <3 self-immolation
+            }
+
+            IKTarget = Instantiate(originalBone.gameObject).transform;
+            IKTarget.SetParent(transform);
+
+            TrackerManager.trackers.Add(trackerName, this);
         }
     }
 
