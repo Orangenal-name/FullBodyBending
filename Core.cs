@@ -19,7 +19,6 @@ namespace FullBodyBending
     public class Core : Utilities.RumbleMod
     {
         internal static MelonLogger.Instance loggerInstance;
-        internal static event Action<List<Il2CppSystem.Object>, RaiseEventOptions, SendOptions> raiseEvent;
 
         internal static CVRSystem system;
         private static TrackedDevicePose_t[] poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
@@ -36,12 +35,11 @@ namespace FullBodyBending
 
             if (error != EVRInitError.None)
             {
-                MelonLogger.Error($"OpenVR Init failed: {error}");
+                loggerInstance.Error($"OpenVR Init failed: {error}");
                 return;
             }
             Actions.onMapInitialized += OnSceneWasLoaded;
 
-            raiseEvent += RaiseEvent;
             loggerInstance = LoggerInstance;
 
             LoggerInstance.Msg("Initialised.");
@@ -73,7 +71,9 @@ namespace FullBodyBending
         {
             TrackerManager.initCount = 0;
             RegisterEvents();
-            TrackerManager.InitLocalTrackers();
+
+            if (TrackerManager.trackerCount > 0)
+                TrackerManager.InitLocalTrackers();
         }
 
         public override void OnUpdate()
@@ -100,6 +100,8 @@ namespace FullBodyBending
         public static Dictionary<string, OpenVRTracker> trackers = new();
         public static Dictionary<string, (Vector3, Quaternion)> storedOffsets = new();
 
+        public static int trackerCount = 0;
+
         public static int initCount = 0; // Tracks how many trackers have yet to run their Start() method
 
         public static Dictionary<string, int[]> skeletonPaths = new() // Paths are child indexes after the pelvis bone
@@ -118,6 +120,7 @@ namespace FullBodyBending
             var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
             Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
             bool inGym = Calls.Scene.GetSceneName() == "Gym";
+
             for (uint i = 0; i < poses.Length; i++)
             {
                 if (OpenVR.System.GetTrackedDeviceClass(i) == ETrackedDeviceClass.GenericTracker)
@@ -126,8 +129,6 @@ namespace FullBodyBending
                     OpenVRTracker tracker = trackerObject.AddComponent<OpenVRTracker>();
                     tracker.playerController = Calls.Players.GetLocalPlayer().Controller;
                     tracker.trackerIndex = i;
-
-                    if (!inGym) tracker.networkType = TrackerNetworkType.Local;
 
                     initCount++;
                 }
@@ -171,7 +172,7 @@ namespace FullBodyBending
             }
             if (initCount > 0)
             {
-                MelonLogger.Error("Not all trackers initialised properly!");
+                Core.loggerInstance.Error("Not all trackers initialised properly!");
                 yield break;
             }
             else if (trackers.Count == 0)
@@ -266,13 +267,6 @@ namespace FullBodyBending
         }
     }
 
-    public enum TrackerNetworkType
-    {
-        None,
-        Local,
-        Remote
-    }
-
     [RegisterTypeInIl2Cpp]
     public class OpenVRTracker : MonoBehaviour
     {
@@ -281,7 +275,6 @@ namespace FullBodyBending
         public PlayerController playerController;
         public Transform originalBone;
         public bool isVisible = true;
-        public TrackerNetworkType networkType = TrackerNetworkType.None;
 
         // Set in Start()
         public string controllerType;
@@ -478,26 +471,19 @@ namespace FullBodyBending
 
                 if (trackerType == "knee" || trackerType == "elbow")
                 {
-                    transform.GetChild(0).localPosition += transform.GetChild(0).forward;
+                    transform.GetChild(0).localPosition += transform.GetChild(0).forward; // Helps prevent knees bending backwards
                 }
             }
 
-            if (networkType != TrackerNetworkType.None)
-            {
-                int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
-                PhotonView photonView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
+            int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
+            PhotonView photonView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
 
-                if (networkType == TrackerNetworkType.Local)
-                {
-                    viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
-                }
-                photonView.ViewID = viewID;
+            viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
+            photonView.ViewID = viewID;
 
-                PhotonTransformView photonTransformView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
-                photonView.ObservedComponents = new();
-                photonView.ObservedComponents.Add(photonTransformView);
-            }
-
+            PhotonTransformView photonTransformView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
+            photonView.ObservedComponents = new();
+            photonView.ObservedComponents.Add(photonTransformView);
 
             TrackerManager.trackers.Add(trackerName, this);
             TrackerManager.initCount--;
@@ -534,13 +520,21 @@ namespace FullBodyBending
     {
         private static void Postfix(ref PlayerData __instance)
         {
-            MelonLogger.Msg("Calibrating FBT");
+            MelonLogger.Msg("T-Pose detected!");
+
+            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
+            if (TrackerManager.trackerCount > 0)
+                Core.loggerInstance.Msg("Calibrating FBT...");
+            else return; // We don't need to calibrate what's not there
 
             Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
 
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                tracker.BootLoaderCalibrate(compareSkelington); // TODO: Make this call normal function outside bootloader
+                if (Calls.Scene.GetSceneName() == "Loader")
+                    tracker.BootLoaderCalibrate(compareSkelington);
+                else
+                    tracker.Calibrate(compareSkelington);
             }
 
             GameObject.Destroy(compareSkelington.gameObject);
