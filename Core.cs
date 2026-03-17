@@ -33,20 +33,21 @@ namespace FullBodyBending
             var error = EVRInitError.None;
             system = OpenVR.Init(ref error, EVRApplicationType.VRApplication_Background);
 
+            loggerInstance = LoggerInstance;
+
             if (error != EVRInitError.None)
             {
                 loggerInstance.Error($"OpenVR Init failed: {error}");
-                return;
             }
             Actions.onMapInitialized += OnSceneWasLoaded;
 
-            loggerInstance = LoggerInstance;
 
             LoggerInstance.Msg("Initialised.");
         }
 
         public override void OnEvent(List<Il2CppSystem.Object> data)
         {
+            MelonLogger.Msg($"Received raise event: {data[0]}");
             MelonCoroutines.Start(DelayedEvent(data));
         }
 
@@ -70,9 +71,30 @@ namespace FullBodyBending
         public void OnSceneWasLoaded(string sceneName)
         {
             TrackerManager.initCount = 0;
+
             RegisterEvents();
 
-            if (TrackerManager.trackerCount > 0)
+            // Line above should add the mod to registered mods, but sometimes it just disappears for no reason
+            var RaiseEventManager = RegisteredMelons.Where(melon => melon.Info.Name == "RumbleModdingAPI").First().MelonAssembly.Assembly.GetTypes().Where(type => type.Name == "RaiseEventManager").First();
+            if (RaiseEventManager != null)
+            {
+                var registeredMods = RaiseEventManager.GetField("RegisteredMods", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                if (registeredMods != null)
+                {
+                    var instance = RaiseEventManager.GetField("instance", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).GetValue(null);
+
+                    Dictionary<string, Utilities.RumbleMod> value = (Dictionary<string, Utilities.RumbleMod>)registeredMods.GetValue(instance);
+
+                    if (!value.ContainsKey("FullBodyBending|Orangenal"))
+                    {
+                        value.Add("FullBodyBending|Orangenal", this);
+                        registeredMods.SetValue(instance, value);
+                    }
+                }
+            }
+
+            if (TrackerManager.trackerCount > 0 && system != null)
                 TrackerManager.InitLocalTrackers();
         }
 
@@ -157,6 +179,15 @@ namespace FullBodyBending
                 trackerObject.transform.SetParent(ownerController.PlayerVR.transform);
 
                 Transform IKTarget = GameObject.Instantiate(GetBone(trackerName, skelington));
+                IKTarget.SetParent(ownerController.PlayerVR.transform);
+
+                PhotonView photonView = IKTarget.gameObject.AddComponent<PhotonView>();
+
+                photonView.ViewID = viewID;
+
+                PhotonTransformView photonTransformView = IKTarget.game.AddComponent<PhotonTransformView>();
+                photonView.ObservedComponents = new();
+                photonView.ObservedComponents.Add(photonTransformView);
 
                 AssignRemoteIK(ownerController, trackerName, IKTarget);
             }
@@ -473,17 +504,19 @@ namespace FullBodyBending
                 {
                     transform.GetChild(0).localPosition += transform.GetChild(0).forward; // Helps prevent knees bending backwards
                 }
+
+                int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
+                PhotonView photonView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
+
+                viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
+                photonView.ViewID = viewID;
+
+                PhotonTransformView photonTransformView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
+                photonView.ObservedComponents = new();
+                photonView.ObservedComponents.Add(photonTransformView);
             }
 
-            int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
-            PhotonView photonView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
-
-            viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
-            photonView.ViewID = viewID;
-
-            PhotonTransformView photonTransformView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
-            photonView.ObservedComponents = new();
-            photonView.ObservedComponents.Add(photonTransformView);
+            
 
             TrackerManager.trackers.Add(trackerName, this);
             TrackerManager.initCount--;
@@ -500,6 +533,7 @@ namespace FullBodyBending
     {
         private static void Postfix(ref BootLoaderPlayer __instance)
         {
+            if (Core.system == null) return;
             var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
             Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
             for (uint i = 0; i < poses.Length; i++)
