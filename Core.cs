@@ -185,7 +185,7 @@ namespace FullBodyBending
 
                 photonView.ViewID = viewID;
 
-                PhotonTransformView photonTransformView = IKTarget.game.AddComponent<PhotonTransformView>();
+                PhotonTransformView photonTransformView = IKTarget.gameObject.AddComponent<PhotonTransformView>();
                 photonView.ObservedComponents = new();
                 photonView.ObservedComponents.Add(photonTransformView);
 
