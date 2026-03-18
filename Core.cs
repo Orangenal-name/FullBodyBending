@@ -179,6 +179,7 @@ namespace FullBodyBending
                 trackerObject.transform.SetParent(ownerController.PlayerVR.transform);
 
                 Transform IKTarget = GameObject.Instantiate(GetBone(trackerName, skelington));
+                IKTarget.gameObject.active = false; // Doesn't need to be active to be used for tracking lol
                 IKTarget.SetParent(ownerController.PlayerVR.transform);
 
                 PhotonView photonView = IKTarget.gameObject.AddComponent<PhotonView>();
@@ -484,6 +485,7 @@ namespace FullBodyBending
                 originalBone = TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1));
 
                 IKTarget = Instantiate(originalBone.gameObject).transform;
+                IKTarget.gameObject.active = false;
                 IKTarget.SetParent(transform);
                 
                 IKTarget.localPosition = Vector3.zero;
