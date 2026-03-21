@@ -5,10 +5,13 @@ using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
+using Il2CppRUMBLE.Players.Scaling;
+using Il2CppRUMBLE.Players.Subsystems;
 using MelonLoader;
 using RumbleModdingAPI.RMAPI;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Playables;
 using Valve.OpenVR;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
@@ -41,7 +44,21 @@ namespace FullBodyBending
             }
             Actions.onMapInitialized += OnSceneWasLoaded;
 
+            if (File.Exists("UserData/FullBodyBending/offsets.txt"))
+            {
+                foreach (string line in File.ReadAllLines("UserData/FullBodyBending/offsets.txt"))
+                {
+                    string[] splitLine = line.Split(" ");
+                    string[] posStr = splitLine[1..3];
+                    string[] rotStr = splitLine[4..7];
 
+                    Vector3 pos = new(float.Parse(posStr[0]), float.Parse(posStr[1]), float.Parse(posStr[2]));
+                    Quaternion rot = new(float.Parse(rotStr[0]), float.Parse(rotStr[1]), float.Parse(rotStr[2]), float.Parse(rotStr[3]));
+
+                    TrackerManager.storedOffsets.Add(splitLine[0], (pos, rot));
+                }
+            }
+            
             LoggerInstance.Msg("Initialised.");
         }
 
@@ -74,7 +91,7 @@ namespace FullBodyBending
 
             RegisterEvents();
 
-            // Line above should add the mod to registered mods, but sometimes it just disappears for no reason
+            // Line above should add the mod to registered mods, but sometimes it just disappears for no reason, so we gotta make sure
             var RaiseEventManager = RegisteredMelons.Where(melon => melon.Info.Name == "RumbleModdingAPI").First().MelonAssembly.Assembly.GetTypes().Where(type => type.Name == "RaiseEventManager").First();
             if (RaiseEventManager != null)
             {
@@ -154,6 +171,12 @@ namespace FullBodyBending
 
                     initCount++;
                 }
+            }
+
+            // This should only be the case if the user hasn't calibrated
+            if (TrackerManager.storedOffsets.Count < 0)
+            {
+                Core.loggerInstance.Warning("Trackers have not been calibrated! Please T-Pose to calibrate.");
             }
 
             if (inGym) return;
@@ -332,47 +355,45 @@ namespace FullBodyBending
             transform.localRotation = Quaternion.LookRotation(forward, up) * Quaternion.Euler(0, 225, 0);
         }
 
-        // Allows for individual trackers to be calibrated
+        // Allows for individual trackers to be calibrated, does not work in the bootloader
         public void Calibrate()
         {
             Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
+            Transform activeSkeleton = playerController.PlayerVisuals.transform.GetChild(1);
 
-            Calibrate(compareSkelington);
+            float rotY = playerController.PlayerVR.transform.FindChild("Headset Offset").GetChild(0).rotation.eulerAngles.y + (Calls.Scene.GetSceneName() != "Loader" ? 30 : 0);
+
+            Calibrate(compareSkelington, activeSkeleton, rotY);
 
             Destroy(compareSkelington.gameObject);
         }
 
         // Allows for the same skeleton to be compared against multiple times when calibrating multiple trackers
-        public void Calibrate(Transform compareSkelington)
+        public void Calibrate(Transform compareSkelington, Transform activeSkeleton, float lookY)
         {
-            Transform activeSkeleton = playerController.PlayerVisuals.transform.GetChild(1);
             compareSkelington.position = activeSkeleton.position;
-            Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
-
-            Vector3 posOffset = compareBone.localPosition - transform.localPosition;
-            Quaternion rotOffset = compareBone.localRotation * Quaternion.Inverse(transform.localRotation);
-
-            offsets = (posOffset, rotOffset);
-            TrackerManager.storedOffsets.Add(trackerName, offsets);
-            offsetsSet = true;
-        }
-
-        //This is only for the loader because visuals are in a different spot
-        public void BootLoaderCalibrate(Transform compareSkelington)
-        {
-            Transform activeSkeleton = playerController.transform.GetChild(0).GetChild(2);
-            compareSkelington.position = activeSkeleton.position;
-            compareSkelington.rotation = activeSkeleton.rotation;
+            compareSkelington.GetChild(0).rotation = Quaternion.Euler(new Vector3(activeSkeleton.rotation.x, lookY, activeSkeleton.rotation.z));
+            
             Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
 
             Vector3 posOffset = compareBone.localPosition - transform.localPosition;
             Quaternion rotOffset = Quaternion.Euler(compareBone.localRotation.eulerAngles - transform.localRotation.eulerAngles);
 
             if (trackerType == "foot")
-                rotOffset = Quaternion.Euler(rotOffset.eulerAngles + new Vector3(180, 0, 0));
+            {
+                rotOffset = Quaternion.Euler(rotOffset.eulerAngles + new Vector3(180, lookY, 0)); // TODO: fix foot rotation when calibrated facing away from play space forward
+            }
 
             offsets = (posOffset, rotOffset);
-            TrackerManager.storedOffsets.Add(trackerName, offsets);
+            if (TrackerManager.storedOffsets.ContainsKey(trackerName))
+                TrackerManager.storedOffsets[trackerName] = offsets;
+            else
+                TrackerManager.storedOffsets.Add(trackerName, offsets);
+
+            if (Calls.Scene.GetSceneName() != "Loader")
+            {
+                AssignIK();
+            }
             offsetsSet = true;
         }
 
@@ -401,9 +422,7 @@ namespace FullBodyBending
             GameObject VisualsGO = playerController.PlayerVisuals.gameObject;
             IKSolverVR solver = VisualsGO.GetComponent<VRIK>().solver;
             string side = trackerName.Split("_")[0];
-
             
-
             switch (trackerType)
             {
                 case "chest":
@@ -430,6 +449,11 @@ namespace FullBodyBending
             IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
 
             if (!offsetsSet) return;
+
+            if (IKTarget.parent != transform)
+            {
+                IKTarget.SetParent(transform);
+            }
 
             IKTarget.localPosition = offsets.Item1;
             IKTarget.localRotation = offsets.Item2;
@@ -486,7 +510,7 @@ namespace FullBodyBending
 
                 IKTarget = Instantiate(originalBone.gameObject).transform;
                 IKTarget.gameObject.active = false;
-                IKTarget.SetParent(transform);
+                IKTarget.SetParent(TrackerManager.trackerCount == TrackerManager.trackers.Count ? transform : originalBone);
                 
                 IKTarget.localPosition = Vector3.zero;
                 IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
@@ -504,7 +528,7 @@ namespace FullBodyBending
 
                 if (trackerType == "knee" || trackerType == "elbow")
                 {
-                    transform.GetChild(0).localPosition += transform.GetChild(0).forward; // Helps prevent knees bending backwards
+                    transform.GetChild(0).localPosition += transform.GetChild(0).forward * 10; // Helps prevent knees bending backwards
                 }
 
                 int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
@@ -551,10 +575,10 @@ namespace FullBodyBending
         }
     }
 
-    [HarmonyPatch(typeof(PlayerData), nameof(PlayerData.SetMeasurement))]
-    public static class TPosePatch
+    [HarmonyPatch(typeof(BootLoaderMeasurementSystem), nameof(BootLoaderMeasurementSystem.DoMeasurement))]
+    public static class LoaderTPosePatch
     {
-        private static void Postfix(ref PlayerData __instance)
+        private static void Postfix(ref BootLoaderMeasurementSystem __instance)
         {
             MelonLogger.Msg("T-Pose detected!");
 
@@ -565,13 +589,93 @@ namespace FullBodyBending
 
             Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
 
+            Dictionary<string, string> offsets = new();
+
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                if (Calls.Scene.GetSceneName() == "Loader")
-                    tracker.BootLoaderCalibrate(compareSkelington);
-                else
-                    tracker.Calibrate(compareSkelington);
+                Transform activeSkeleton = __instance.transform.GetChild(0).GetChild(2);
+                float rotY = __instance.parentController.PlayerVR.transform.FindChild("Headset Offset").GetChild(0).rotation.eulerAngles.y;
+
+                tracker.Calibrate(compareSkelington, activeSkeleton, rotY);
+
+                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.w} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z}");
             }
+
+            if (!Directory.Exists("UserData/FullBodyBending"))
+            {
+                Directory.CreateDirectory("UserData/FullBodyBending");
+            }
+            if (!File.Exists("UserData/FullBodyBending/offsets.txt"))
+            {
+                File.Create("UserData/FullBodyBending/offsets.txt").Dispose();
+            }
+
+            string[] lines = File.ReadAllLines("UserData/FullBodyBending/offsets.txt");
+            List<string> linesToWrite = new();
+            foreach (string line in lines)
+            {
+                string[] parts = line.Split(" ");
+                string trackerName = parts[0];
+                if (!offsets.ContainsKey(trackerName))
+                    linesToWrite.Add(String.Join(" ", parts));
+            }
+
+            linesToWrite = linesToWrite.Concat(offsets.Select(offset => $"{offset.Key} {offset.Value}")).ToList();
+
+            File.WriteAllLines("UserData/FullBodyBending/offsets.txt", linesToWrite);
+
+            GameObject.Destroy(compareSkelington.gameObject);
+        }
+    }
+
+    [HarmonyPatch(typeof(PlayerScaling), nameof(PlayerScaling.OnMeasureTimerEnd))]
+    public static class LoadedTPosePatch
+    {
+        private static void Postfix()
+        {
+            MelonLogger.Msg("T-Pose detected!");
+
+            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
+            if (TrackerManager.trackerCount > 0)
+                Core.loggerInstance.Msg("Calibrating FBT...");
+            else return; // We don't need to calibrate what's not there
+
+            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().First().PlayerVisuals.transform.GetChild(1).gameObject).transform;
+
+            Dictionary<string, string> offsets = new();
+
+            foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
+            {
+                Transform activeSkeleton = tracker.playerController.PlayerVisuals.transform.GetChild(1);
+                float rotY = tracker.playerController.PlayerEyeSystem.transform.GetChild(0).rotation.eulerAngles.y + 30;
+
+                tracker.Calibrate(compareSkelington, activeSkeleton, rotY);
+
+                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.w} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z}");
+            }
+
+            if (!Directory.Exists("UserData/FullBodyBending"))
+            {
+                Directory.CreateDirectory("UserData/FullBodyBending");
+            }
+            if (!File.Exists("UserData/FullBodyBending/offsets.txt"))
+            {
+                File.Create("UserData/FullBodyBending/offsets.txt").Dispose();
+            }
+
+            string[] lines = File.ReadAllLines("UserData/FullBodyBending/offsets.txt");
+            List<string> linesToWrite = new();
+            foreach (string line in lines)
+            {
+                string[] parts = line.Split(" ");
+                string trackerName = parts[0];
+                if (!offsets.ContainsKey(trackerName))
+                    linesToWrite.Add(String.Join(" ", parts));
+            }
+
+            linesToWrite = linesToWrite.Concat(offsets.Select(offset => $"{offset.Key} {offset.Value}")).ToList();
+
+            File.WriteAllLines("UserData/FullBodyBending/offsets.txt", linesToWrite);
 
             GameObject.Destroy(compareSkelington.gameObject);
         }
