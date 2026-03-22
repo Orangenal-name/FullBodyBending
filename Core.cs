@@ -3,6 +3,7 @@ using Il2CppExitGames.Client.Photon;
 using Il2CppPhoton.Pun;
 using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
+using Il2CppRUMBLE.Networking;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
 using Il2CppRUMBLE.Players.Scaling;
@@ -209,9 +210,10 @@ namespace FullBodyBending
 
                 photonView.ViewID = viewID;
 
-                PhotonTransformView photonTransformView = IKTarget.gameObject.AddComponent<PhotonTransformView>();
+                NetworkGameObject networkGameObject = IKTarget.gameObject.AddComponent<NetworkGameObject>();
+                networkGameObject.stateFlags = NetworkGameObject.SerializationFlag.Position | NetworkGameObject.SerializationFlag.Rotation;
                 photonView.ObservedComponents = new();
-                photonView.ObservedComponents.Add(photonTransformView);
+                photonView.ObservedComponents.Add(networkGameObject);
 
                 AssignRemoteIK(ownerController, trackerName, IKTarget);
             }
@@ -537,9 +539,10 @@ namespace FullBodyBending
                 viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
                 photonView.ViewID = viewID;
 
-                PhotonTransformView photonTransformView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonTransformView>();
+                NetworkGameObject networkGameObject = IKTarget.gameObject.AddComponent<NetworkGameObject>();
+                networkGameObject.stateFlags = NetworkGameObject.SerializationFlag.Position | NetworkGameObject.SerializationFlag.Rotation;
                 photonView.ObservedComponents = new();
-                photonView.ObservedComponents.Add(photonTransformView);
+                photonView.ObservedComponents.Add(networkGameObject);
             }
 
             
