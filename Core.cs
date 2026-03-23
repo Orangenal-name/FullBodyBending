@@ -6,13 +6,11 @@ using Il2CppRootMotion.FinalIK;
 using Il2CppRUMBLE.Networking;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
-using Il2CppRUMBLE.Players.Scaling;
 using Il2CppRUMBLE.Players.Subsystems;
 using MelonLoader;
 using RumbleModdingAPI.RMAPI;
 using System.Collections;
 using UnityEngine;
-using UnityEngine.Playables;
 using Valve.OpenVR;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
@@ -50,8 +48,8 @@ namespace FullBodyBending
                 foreach (string line in File.ReadAllLines("UserData/FullBodyBending/offsets.txt"))
                 {
                     string[] splitLine = line.Split(" ");
-                    string[] posStr = splitLine[1..3];
-                    string[] rotStr = splitLine[4..7];
+                    string[] posStr = splitLine[1..4];
+                    string[] rotStr = splitLine[4..8];
 
                     Vector3 pos = new(float.Parse(posStr[0]), float.Parse(posStr[1]), float.Parse(posStr[2]));
                     Quaternion rot = new(float.Parse(rotStr[0]), float.Parse(rotStr[1]), float.Parse(rotStr[2]), float.Parse(rotStr[3]));
@@ -88,6 +86,7 @@ namespace FullBodyBending
 
         public void OnSceneWasLoaded(string sceneName)
         {
+            TrackerManager.trackers.Clear();
             TrackerManager.initCount = 0;
 
             RegisterEvents();
@@ -113,7 +112,19 @@ namespace FullBodyBending
             }
 
             if (TrackerManager.trackerCount > 0 && system != null)
+            {
                 TrackerManager.InitLocalTrackers();
+                MelonLogger.Msg("Trackers");
+            }
+            else
+            {
+                MelonLogger.Msg("No Trackers");
+            }
+        }
+
+        public override void OnSceneWasLoaded(int buildIndex, string sceneName)
+        {
+            MelonLogger.Msg("Right here");
         }
 
         public override void OnUpdate()
@@ -123,11 +134,17 @@ namespace FullBodyBending
 
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                uint trackerIndex = tracker.trackerIndex;
-                if (poses[trackerIndex].bDeviceIsConnected && poses[trackerIndex].bPoseIsValid)
+                try
                 {
-                    TrackedDevicePose_t pose = poses[tracker.trackerIndex];
-                    tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
+                    uint trackerIndex = tracker.trackerIndex;
+                    if (poses[trackerIndex].bDeviceIsConnected && poses[trackerIndex].bPoseIsValid)
+                    {
+                        TrackedDevicePose_t pose = poses[tracker.trackerIndex];
+                        tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
+                    }
+                } catch (NullReferenceException e)
+                {
+                    // Just ignore it, probably a scene load happened
                 }
             }
         }
@@ -156,7 +173,7 @@ namespace FullBodyBending
         };
 
         public static void InitLocalTrackers()
-        { // TODO: Add a check for if the user actually has trackers lmao
+        {
             var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
             Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
             bool inGym = Calls.Scene.GetSceneName() == "Gym";
@@ -550,11 +567,6 @@ namespace FullBodyBending
             TrackerManager.trackers.Add(trackerName, this);
             TrackerManager.initCount--;
         }
-
-        private void OnDestroy()
-        {
-            TrackerManager.trackers.Remove(trackerName);
-        }
     }
 
     [HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
@@ -631,6 +643,20 @@ namespace FullBodyBending
         }
     }
 
+    [HarmonyPatch(typeof(PlayerData), nameof(PlayerData.SetMeasurement))]
+    public static class LoaderSkipperCompatPatch
+    {
+        private static void Postfix()
+        {
+            MelonLogger.Msg("This should be called");
+            if (TrackerManager.trackerCount != TrackerManager.trackers.Count)
+            {
+                MelonLogger.Msg("idk about this though");
+                TrackerManager.trackerCount = TrackerManager.trackers.Count;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerScaling), nameof(PlayerScaling.OnMeasureTimerEnd))]
     public static class LoadedTPosePatch
     {
@@ -650,7 +676,7 @@ namespace FullBodyBending
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
                 Transform activeSkeleton = tracker.playerController.PlayerVisuals.transform.GetChild(1);
-                float rotY = tracker.playerController.PlayerEyeSystem.transform.GetChild(0).rotation.eulerAngles.y + 30;
+                float rotY = tracker.playerController.PlayerEyeSystem.transform.rotation.eulerAngles.y - tracker.playerController.PlayerVR.transform.rotation.eulerAngles.y;
 
                 tracker.Calibrate(compareSkelington, activeSkeleton, rotY);
 
