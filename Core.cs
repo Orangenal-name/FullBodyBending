@@ -142,7 +142,7 @@ namespace FullBodyBending
                         TrackedDevicePose_t pose = poses[tracker.trackerIndex];
                         tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
                     }
-                } catch (NullReferenceException e)
+                } catch (Exception e)
                 {
                     // Just ignore it, probably a scene load happened
                 }
@@ -174,6 +174,7 @@ namespace FullBodyBending
 
         public static void InitLocalTrackers()
         {
+            MelonLogger.Msg(trackers.Count);
             var poses = new TrackedDevicePose_t[OpenVR.k_unMaxTrackedDeviceCount];
             Core.system.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
             bool inGym = Calls.Scene.GetSceneName() == "Gym";
@@ -192,7 +193,7 @@ namespace FullBodyBending
             }
 
             // This should only be the case if the user hasn't calibrated
-            if (TrackerManager.storedOffsets.Count < 0)
+            if (TrackerManager.storedOffsets.Count == 0)
             {
                 Core.loggerInstance.Warning("Trackers have not been calibrated! Please T-Pose to calibrate.");
             }
@@ -392,18 +393,31 @@ namespace FullBodyBending
         {
             compareSkelington.position = activeSkeleton.position;
             compareSkelington.GetChild(0).rotation = Quaternion.Euler(new Vector3(activeSkeleton.rotation.x, lookY, activeSkeleton.rotation.z));
-            
+
             Transform compareBone = TrackerManager.GetBone(trackerName, compareSkelington);
 
             Vector3 posOffset = compareBone.localPosition - transform.localPosition;
             Quaternion rotOffset = Quaternion.Euler(compareBone.localRotation.eulerAngles - transform.localRotation.eulerAngles);
+            Quaternion altRotOffset = compareBone.localRotation * Quaternion.Inverse(transform.localRotation);
 
             if (trackerType == "foot")
             {
-                rotOffset = Quaternion.Euler(rotOffset.eulerAngles + new Vector3(180, lookY, 0)); // TODO: fix foot rotation when calibrated facing away from play space forward
+                MelonLogger.Msg($"{trackerName} before: {rotOffset.eulerAngles}");
+                MelonLogger.Msg($"before (euler): {altRotOffset.eulerAngles}");
+                MelonLogger.Msg($"before (quaternion): {altRotOffset}");
+                rotOffset = Quaternion.Euler(rotOffset.eulerAngles + new Vector3(180, lookY, 0));
+                altRotOffset = Quaternion.Euler(altRotOffset.eulerAngles + new Vector3(180, lookY, 0));
+                MelonLogger.Msg($"{trackerName} after: {rotOffset.eulerAngles}");
+                MelonLogger.Msg($"after (euler): {altRotOffset.eulerAngles}");
+                MelonLogger.Msg($"after (quaternion): {altRotOffset}");
             }
 
-            offsets = (posOffset, rotOffset);
+            if (trackerType == "knee" || trackerType == "elbow")
+            {
+                posOffset *= 10; // Helps prevent knees bending backwards
+            }
+
+            offsets = (posOffset, altRotOffset);
             if (TrackerManager.storedOffsets.ContainsKey(trackerName))
                 TrackerManager.storedOffsets[trackerName] = offsets;
             else
@@ -521,6 +535,7 @@ namespace FullBodyBending
                 }
                 TrackerManager.initCount--;
                 Destroy(gameObject); // We <3 self-immolation
+                return;
             }
 
             if (Calls.Scene.GetSceneName() != "Loader")
@@ -545,13 +560,8 @@ namespace FullBodyBending
                     AssignIK();
                 }
 
-                if (trackerType == "knee" || trackerType == "elbow")
-                {
-                    transform.GetChild(0).localPosition += transform.GetChild(0).forward * 10; // Helps prevent knees bending backwards
-                }
-
                 int ownerActorNo = playerController.assignedPlayer.Data.GeneralData.actorNo;
-                PhotonView photonView = gameObject.transform.GetChild(0).gameObject.AddComponent<PhotonView>();
+                PhotonView photonView = IKTarget.gameObject.AddComponent<PhotonView>();
 
                 viewID = PhotonNetwork.AllocateViewID(ownerActorNo);
                 photonView.ViewID = viewID;
@@ -561,8 +571,6 @@ namespace FullBodyBending
                 photonView.ObservedComponents = new();
                 photonView.ObservedComponents.Add(networkGameObject);
             }
-
-            
 
             TrackerManager.trackers.Add(trackerName, this);
             TrackerManager.initCount--;
@@ -613,7 +621,7 @@ namespace FullBodyBending
 
                 tracker.Calibrate(compareSkelington, activeSkeleton, rotY);
 
-                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.w} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z}");
+                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z} {tracker.offsets.Item2.w}");
             }
 
             if (!Directory.Exists("UserData/FullBodyBending"))
@@ -680,7 +688,7 @@ namespace FullBodyBending
 
                 tracker.Calibrate(compareSkelington, activeSkeleton, rotY);
 
-                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.w} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z}");
+                offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z} {tracker.offsets.Item2.w}");
             }
 
             if (!Directory.Exists("UserData/FullBodyBending"))
