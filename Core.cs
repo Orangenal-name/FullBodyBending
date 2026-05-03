@@ -56,7 +56,7 @@ namespace FullBodyBending
                     TrackerManager.storedOffsets.Add(splitLine[0], (pos, rot));
                 }
             }
-            
+
             LoggerInstance.Msg("Initialised.");
         }
 
@@ -176,18 +176,18 @@ namespace FullBodyBending
             {
                 foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
                 {
-                    //Transform activeSkeleton = tracker.playerController.PlayerVisuals.transform.GetChild(1);
+                    Transform activeSkeleton = tracker.playerController.PlayerVisuals.transform.GetChild(1);
 
                     //float lookY = activeSkeleton.transform.GetChild(0).rotation.eulerAngles.y;
 
-                    tracker.Calibrate();
+                    tracker.Calibrate(activeSkeleton);
                 }
                 justCalibrated = true;
             }
-            
+
             if (system == null || TrackerManager.trackers.Count == 0) return;
 
-            
+
 
             OpenVR.System.GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin.TrackingUniverseStanding, 0, poses);
 
@@ -201,7 +201,8 @@ namespace FullBodyBending
                         TrackedDevicePose_t pose = poses[tracker.trackerIndex];
                         tracker.UpdateTransform(pose.mDeviceToAbsoluteTracking);
                     }
-                } catch (Exception e)
+                }
+                catch (Exception e)
                 {
                     // Just ignore it, probably a scene load happened
                 }
@@ -381,7 +382,7 @@ namespace FullBodyBending
 
             if (TrackerManager.skeletonPaths.ContainsKey(trackerName))
             {
-                int[] path = (Calls.Scene.GetSceneName() != "Loader" ? TrackerManager.skeletonPaths : TrackerManager.skeletonPathsLoader)[trackerName];
+                int[] path = (Calls.Scene.GetSceneName() != "Loader" ? TrackerManager.skeletonPaths : TrackerManager.skeletonPaths)[trackerName];
 
                 foreach (int child in path)
                 {
@@ -477,11 +478,9 @@ namespace FullBodyBending
             transform.localRotation = Quaternion.LookRotation(forward, up);
         }
 
-        public void Calibrate()
+        public void Calibrate(Transform skeleton)
         {
-            Transform skeleton = playerController.PlayerVisuals.transform.GetChild(1);
             Transform bone = TrackerManager.GetBone(trackerName, skeleton);
-
             Vector3 expectedPos = bone.position;
             Quaternion expectedRot = bone.rotation;
 
@@ -517,6 +516,8 @@ namespace FullBodyBending
             playerIK.enabled = true;
             vrik.enabled = true;
 
+            animator.speed = 0;
+
             yield break;
         }
 
@@ -545,7 +546,7 @@ namespace FullBodyBending
             GameObject VisualsGO = playerController.PlayerVisuals.gameObject;
             IKSolverVR solver = VisualsGO.GetComponent<VRIK>().solver;
             string side = trackerName.Split("_")[0];
-            
+
             switch (trackerType)
             {
                 case "chest":
@@ -584,6 +585,7 @@ namespace FullBodyBending
 
         private void Start()
         {
+            bool isLoader = Calls.Scene.GetSceneName() == "Loader";
             transform.SetParent(playerController.PlayerVR.transform);
             transform.localPosition = Vector3.zero;
             Destroy(GetComponent<SphereCollider>());
@@ -628,23 +630,23 @@ namespace FullBodyBending
                 return;
             }
 
-            if (Calls.Scene.GetSceneName() != "Loader")
+            originalBone = isLoader ? transform : TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1)); // Original bone doesn't actually matter in the loader
+
+            IKTarget = Instantiate(originalBone.gameObject).transform;
+            IKTarget.gameObject.active = false;
+            IKTarget.SetParent(TrackerManager.trackerCount == TrackerManager.trackers.Count ? transform : originalBone);
+
+            IKTarget.localPosition = Vector3.zero;
+            IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
+
+            if (TrackerManager.storedOffsets.ContainsKey(trackerName))
             {
-                originalBone = TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1));
+                offsets = TrackerManager.storedOffsets[trackerName];
+                offsetsSet = true;
+            }
 
-                IKTarget = Instantiate(originalBone.gameObject).transform;
-                IKTarget.gameObject.active = false;
-                IKTarget.SetParent(TrackerManager.trackerCount == TrackerManager.trackers.Count ? transform : originalBone);
-                
-                IKTarget.localPosition = Vector3.zero;
-                IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
-
-                if (TrackerManager.storedOffsets.ContainsKey(trackerName))
-                {
-                    offsets = TrackerManager.storedOffsets[trackerName];
-                    offsetsSet = true;
-                }
-
+            if (!isLoader)
+            {
                 if (offsetsSet)
                 {
                     AssignIK();
@@ -691,48 +693,30 @@ namespace FullBodyBending
     [HarmonyPatch(typeof(BootLoaderMeasurementSystem), nameof(BootLoaderMeasurementSystem.DoMeasurement))]
     public static class LoaderTPosePatch
     {
-        private static int gotHereCounter = 1;
-        private static void GotHere()
+        internal static IEnumerator WaitToCalibrate(Vector3 skelHeadOriginalPos, Transform skeleton, PlayerController localPlayer)
         {
-            MelonLogger.Msg($"Got here {gotHereCounter}");
-            gotHereCounter++;
-        }
-        private static void Postfix(ref BootLoaderMeasurementSystem __instance)
-        {
-            gotHereCounter = 1;
-            MelonLogger.Msg("T-Pose detected!");
+            yield return new WaitForEndOfFrame();
 
-            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
-            if (TrackerManager.trackerCount > 0)
-                Core.loggerInstance.Msg("Calibrating FBT...");
-            else return; // We don't need to calibrate what's not there
-            GotHere();
-            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("(Clone)")).FirstOrDefault().PlayerVisuals.transform.GetChild(1).gameObject).transform;
-            Transform activeSkeleton = __instance.transform.GetChild(0).GetChild(2);
-            GotHere();
-            PlayerIK playerIK = __instance.parentController.PlayerIK;
-            VRIK vrik = playerIK.VrIK;
-            Animator animator = vrik.transform.GetComponent<Animator>();
-            GotHere();
-            playerIK.enabled = false;
-            vrik.enabled = false;
-            animator.enabled = false;
-            GotHere();
-            Core.CopySkeleton(ref activeSkeleton, compareSkelington);
-            GameObject.Destroy(compareSkelington.gameObject);
-            Transform headsetIkTarget = __instance.parentController.PlayerVR.transform.GetChild(1).GetChild(0).GetChild(0);
-            Transform skelHead = activeSkeleton.GetChild(0).GetChild(3).GetChild(0).GetChild(0).GetChild(0);
+            PlayerVR playerVR = localPlayer.PlayerVR;
+            Transform headsetIkTarget = playerVR.transform.GetChild(1).GetChild(0).GetChild(0);
+            Transform skelHead = skeleton.GetChild(0).GetChild(3).GetChild(0).GetChild(0).GetChild(0);
             Vector3 rotOffset = new Vector3(0, headsetIkTarget.rotation.eulerAngles.y - skelHead.rotation.eulerAngles.y, 0);
-            activeSkeleton.Rotate(rotOffset);
+
+            skeleton.Rotate(rotOffset);
+
+            if (skelHeadOriginalPos != Vector3.zero)
+            {
+                Vector3 posOffset = skelHeadOriginalPos - skelHead.position;
+                skeleton.position += posOffset;
+            }
+
+            yield return null;
 
             Dictionary<string, string> offsets = new();
-            GotHere();
+
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                //float rotY = __instance.parentController.PlayerVR.transform.FindChild("Headset Offset").GetChild(0).rotation.eulerAngles.y;
-
-                MelonCoroutines.Start(LoadedTPosePatch.WaitToCalibrate(tracker));
-
+                tracker.Calibrate(skeleton);
                 offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z} {tracker.offsets.Item2.w}");
             }
 
@@ -758,6 +742,29 @@ namespace FullBodyBending
             linesToWrite = linesToWrite.Concat(offsets.Select(offset => $"{offset.Key} {offset.Value}")).ToList();
 
             File.WriteAllLines("UserData/FullBodyBending/offsets.txt", linesToWrite);
+
+            yield break;
+        }
+        private static void Postfix(ref BootLoaderMeasurementSystem __instance)
+        {
+            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
+            if (TrackerManager.trackerCount > 0)
+                Core.loggerInstance.Msg("Calibrating FBT...");
+            else return; // We don't need to calibrate what's not there
+
+            PlayerController localPlayer = __instance.parentController;
+            VRIK vrik = __instance.transform.GetChild(0).GetComponent<VRIK>();
+
+            vrik.enabled = false;
+
+            Transform Skelington = vrik.transform.GetChild(2);
+
+            Vector3 skelHeadOriginalPos = Skelington.GetChild(0).GetChild(3).GetChild(0).GetChild(0).GetChild(0).position;
+
+            PlayerController controller = Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("(Clone)")).FirstOrDefault();
+            Transform prefabSkeleton = GameObject.Instantiate(controller.PlayerVisuals.transform.GetChild(1).gameObject).transform;
+
+            MelonCoroutines.Start(WaitToCalibrate(skelHeadOriginalPos, prefabSkeleton, localPlayer));
         }
     }
 
@@ -776,48 +783,34 @@ namespace FullBodyBending
     [HarmonyPatch(typeof(PlayerScaling), nameof(PlayerScaling.OnMeasureTimerEnd))]
     public static class LoadedTPosePatch
     {
-        internal static IEnumerator WaitToCalibrate(OpenVRTracker tracker)
+        internal static IEnumerator WaitToCalibrate(Vector3 skelHeadOriginalPos, Transform skeleton)
         {
+            yield return new WaitForEndOfFrame();
+
+            PlayerController localPlayer = Calls.Players.GetLocalPlayerController();
+            PlayerVR playerVR = localPlayer.PlayerVR;
+            PlayerIK playerIK = localPlayer.PlayerIK;
+            Animator animator = localPlayer.PlayerAnimator.transform.GetComponent<Animator>();
+
+            Transform headsetIkTarget = playerVR.transform.GetChild(0).GetChild(0).GetChild(0);
+            Transform skelHead = skeleton.GetChild(0).GetChild(4).GetChild(0).GetChild(0).GetChild(0);
+            Vector3 rotOffset = new Vector3(0, headsetIkTarget.rotation.eulerAngles.y - skelHead.rotation.eulerAngles.y, 0);
+
+            skeleton.Rotate(rotOffset);
+
+            if (skelHeadOriginalPos != Vector3.zero)
+            {
+                Vector3 posOffset = skelHeadOriginalPos - skelHead.position;
+                skeleton.position += posOffset;
+            }
+
             yield return null;
-            tracker.Calibrate();
-            yield break;
-        }
-        private static void Postfix()
-        {
-            MelonLogger.Msg("T-Pose detected!");
-
-            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
-            if (TrackerManager.trackerCount > 0)
-                Core.loggerInstance.Msg("Calibrating FBT...");
-            else return; // We don't need to calibrate what's not there
-
-            Transform compareSkelington = GameObject.Instantiate(Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("(Clone)")).FirstOrDefault().PlayerVisuals.transform.GetChild(1).gameObject).transform;
 
             Dictionary<string, string> offsets = new();
 
-            PlayerController playerController = Calls.Players.GetLocalPlayerController();
-            Transform activeSkeleton = playerController.PlayerVisuals.transform.GetChild(1);
-            PlayerIK playerIK = playerController.PlayerIK;
-            VRIK vrik = playerIK.VrIK;
-            Animator animator = vrik.transform.GetComponent<Animator>();
-
-            playerIK.enabled = false;
-            vrik.enabled = false;
-            animator.enabled = false;
-
-            Core.CopySkeleton(ref activeSkeleton, compareSkelington);
-            GameObject.Destroy(compareSkelington.gameObject);
-            Transform headsetIkTarget = playerController.PlayerVR.transform.GetChild(0).GetChild(0).GetChild(0);
-            Transform skelHead = activeSkeleton.GetChild(0).GetChild(4).GetChild(0).GetChild(0).GetChild(0);
-            Vector3 rotOffset = new Vector3(0, headsetIkTarget.rotation.eulerAngles.y - skelHead.rotation.eulerAngles.y, 0);
-            activeSkeleton.Rotate(rotOffset);
-
             foreach (OpenVRTracker tracker in TrackerManager.trackers.Values)
             {
-                //float rotY = tracker.playerController.PlayerEyeSystem.transform.rotation.eulerAngles.y - tracker.playerController.PlayerVR.transform.rotation.eulerAngles.y - 30;
-
-                MelonCoroutines.Start(WaitToCalibrate(tracker));
-
+                tracker.Calibrate(skeleton);
                 offsets.Add(tracker.trackerName, $"{tracker.offsets.Item1.x} {tracker.offsets.Item1.y} {tracker.offsets.Item1.z} {tracker.offsets.Item2.x} {tracker.offsets.Item2.y} {tracker.offsets.Item2.z} {tracker.offsets.Item2.w}");
             }
 
@@ -843,6 +836,35 @@ namespace FullBodyBending
             linesToWrite = linesToWrite.Concat(offsets.Select(offset => $"{offset.Key} {offset.Value}")).ToList();
 
             File.WriteAllLines("UserData/FullBodyBending/offsets.txt", linesToWrite);
+
+            yield break;
+        }
+        private static void Postfix()
+        {
+            MelonLogger.Msg("T-Pose detected!");
+
+            TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
+            if (TrackerManager.trackerCount > 0)
+                Core.loggerInstance.Msg("Calibrating FBT...");
+            else return; // We don't need to calibrate what's not there
+
+            PlayerController localPlayer = Calls.Players.GetLocalPlayerController();
+            PlayerIK playerIK = localPlayer.PlayerIK;
+            VRIK vrik = playerIK.VrIK;
+            Animator animator = vrik.transform.GetComponent<Animator>();
+
+            playerIK.enabled = false;
+            vrik.enabled = false;
+            animator.enabled = false;
+
+            Transform Skelington = animator.transform.GetChild(1);
+
+            Vector3 skelHeadOriginalPos = Skelington.GetChild(0).GetChild(4).GetChild(0).GetChild(0).GetChild(0).position;
+
+            PlayerController controller = Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("(Clone)")).FirstOrDefault();
+            Transform prefabSkeleton = GameObject.Instantiate(controller.PlayerVisuals.transform.GetChild(1).gameObject).transform;
+
+            MelonCoroutines.Start(WaitToCalibrate(skelHeadOriginalPos, prefabSkeleton));
         }
     }
 }
