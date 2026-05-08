@@ -12,6 +12,7 @@ using RumbleModdingAPI.RMAPI;
 using System.Collections;
 using UnityEngine;
 using Valve.OpenVR;
+using static MelonLoader.MelonLogger;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
 [assembly: MelonGame("Buckethead Entertainment", "RUMBLE")]
@@ -72,6 +73,7 @@ namespace FullBodyBending
             while (Calls.Players.GetAllPlayers().Count <= 1 && timeout > 0)
             {
                 timeout--; // We don't really want this running in the background forever if it fails for some reason
+                loggerInstance.Msg("Thing timed out");
                 yield return null;
             }
             if (Calls.Players.GetAllPlayers().Count <= 1)
@@ -240,7 +242,7 @@ namespace FullBodyBending
                 skelHeadOriginalPos = Vector3.zero;
             }
         }
-    }
+        }
 
     public class TrackerManager
     {
@@ -320,11 +322,12 @@ namespace FullBodyBending
                 PlayerController ownerController = Calls.Players.GetPlayerByActorNo(ownerActorNo).Controller;
                 Transform skelington = ownerController.PlayerVisuals.transform.GetChild(1);
 
-                GameObject trackerObject = new GameObject(trackerName);
-                trackerObject.transform.SetParent(ownerController.PlayerVR.transform);
-
                 Transform IKTarget = GameObject.Instantiate(GetBone(trackerName, skelington));
-                IKTarget.gameObject.active = false; // Doesn't need to be active to be used for tracking lol
+                for (int i = 0; i < IKTarget.childCount; i++)
+                {
+                    IKTarget.GetChild(i).gameObject.active = false;
+                }
+                //IKTarget.gameObject.active = false; // Doesn't need to be active to be used for tracking lol
                 IKTarget.SetParent(ownerController.PlayerVR.transform);
 
                 PhotonView photonView = IKTarget.gameObject.AddComponent<PhotonView>();
@@ -382,7 +385,24 @@ namespace FullBodyBending
 
             if (TrackerManager.skeletonPaths.ContainsKey(trackerName))
             {
-                int[] path = (Calls.Scene.GetSceneName() != "Loader" ? TrackerManager.skeletonPaths : TrackerManager.skeletonPaths)[trackerName];
+                int[] path = TrackerManager.skeletonPaths[trackerName];
+
+                foreach (int child in path)
+                {
+                    bone = bone.GetChild(child);
+                }
+            }
+
+            return bone;
+        }
+
+        public static Transform GetBoneLoader(string trackerName, Transform skeleton)
+        {
+            Transform bone = skeleton.GetChild(0);
+
+            if (TrackerManager.skeletonPaths.ContainsKey(trackerName))
+            {
+                int[] path = TrackerManager.skeletonPathsLoader[trackerName];
 
                 foreach (int child in path)
                 {
@@ -488,6 +508,11 @@ namespace FullBodyBending
                 IKTarget.SetParent(transform, false);
 
             IKTarget.position = expectedPos;
+            if (trackerType == "knee")
+            {
+                IKTarget.localPosition = Vector3.zero;
+                IKTarget.position += TrackerManager.GetBone("", skeleton).forward * 5;
+            }
             IKTarget.rotation = expectedRot;
 
             offsets = (IKTarget.localPosition, IKTarget.localRotation);
@@ -507,6 +532,14 @@ namespace FullBodyBending
         private IEnumerator PostCalibration()
         {
             yield return null;
+
+            if (Calls.Scene.GetSceneName() == "Loader")
+            {
+                VRIK loaderVRIK = GameObject.Find("LOGIC").transform.GetChild(0).GetChild(0).GetComponent<VRIK>();
+                loaderVRIK.enabled = true;
+
+                yield break;
+            }
 
             PlayerIK playerIK = playerController.PlayerIK;
             VRIK vrik = playerIK.VrIK;
@@ -592,7 +625,7 @@ namespace FullBodyBending
             if (isVisible)
             {
                 GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
-                transform.localScale = new Vector3(Core.debugTrackerSize, Core.debugTrackerSize, Core.debugTrackerSize);
+                transform.localScale = Vector3.one * Core.debugTrackerSize;
             }
             else Destroy(GetComponent<MeshRenderer>());
 
@@ -630,11 +663,14 @@ namespace FullBodyBending
                 return;
             }
 
-            originalBone = isLoader ? transform : TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1)); // Original bone doesn't actually matter in the loader
+            originalBone = isLoader ? TrackerManager.GetBoneLoader(trackerName, playerController.transform.GetChild(0).GetChild(2)) : TrackerManager.GetBone(trackerName, playerController.PlayerVisuals.transform.GetChild(1)); // Original bone doesn't actually matter in the loader
 
             IKTarget = Instantiate(originalBone.gameObject).transform;
-            IKTarget.gameObject.active = false;
-            IKTarget.SetParent(TrackerManager.trackerCount == TrackerManager.trackers.Count ? transform : originalBone);
+            for (int i = 0; i < IKTarget.childCount; i++)
+            {
+                IKTarget.GetChild(i).gameObject.active = false;
+            }
+            IKTarget.SetParent(TrackerManager.trackerCount == TrackerManager.trackers.Count || isLoader ? transform : originalBone);
 
             IKTarget.localPosition = Vector3.zero;
             IKTarget.localRotation = Quaternion.Euler(Vector3.zero);
@@ -698,16 +734,16 @@ namespace FullBodyBending
             yield return new WaitForEndOfFrame();
 
             PlayerVR playerVR = localPlayer.PlayerVR;
-            Transform headsetIkTarget = playerVR.transform.GetChild(1).GetChild(0).GetChild(0);
-            Transform skelHead = skeleton.GetChild(0).GetChild(3).GetChild(0).GetChild(0).GetChild(0);
+            Transform headsetIkTarget = playerVR.transform.GetChild(1).GetChild(0);
+            Transform skelHead = skeleton.GetChild(0).GetChild(4).GetChild(0).GetChild(0).GetChild(0);
             Vector3 rotOffset = new Vector3(0, headsetIkTarget.rotation.eulerAngles.y - skelHead.rotation.eulerAngles.y, 0);
 
             skeleton.Rotate(rotOffset);
 
             if (skelHeadOriginalPos != Vector3.zero)
             {
-                Vector3 posOffset = skelHeadOriginalPos - skelHead.position;
-                skeleton.position += posOffset;
+            Vector3 posOffset = skelHeadOriginalPos - skelHead.position;
+            skeleton.position += posOffset;
             }
 
             yield return null;
@@ -760,8 +796,7 @@ namespace FullBodyBending
             Transform Skelington = vrik.transform.GetChild(2);
 
             Vector3 skelHeadOriginalPos = Skelington.GetChild(0).GetChild(3).GetChild(0).GetChild(0).GetChild(0).position;
-
-            PlayerController controller = Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("(Clone)")).FirstOrDefault();
+            PlayerController controller = Resources.FindObjectsOfTypeAll<PlayerController>().Where(controller => !controller.gameObject.name.Contains("BootLoader")).FirstOrDefault();
             Transform prefabSkeleton = GameObject.Instantiate(controller.PlayerVisuals.transform.GetChild(1).gameObject).transform;
 
             MelonCoroutines.Start(WaitToCalibrate(skelHeadOriginalPos, prefabSkeleton, localPlayer));
