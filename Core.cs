@@ -3,6 +3,7 @@ using Il2CppExitGames.Client.Photon;
 using Il2CppPhoton.Pun;
 using Il2CppPhoton.Realtime;
 using Il2CppRootMotion.FinalIK;
+using Il2CppRUMBLE.Managers;
 using Il2CppRUMBLE.Networking;
 using Il2CppRUMBLE.Players;
 using Il2CppRUMBLE.Players.BootLoader;
@@ -12,7 +13,6 @@ using RumbleModdingAPI.RMAPI;
 using System.Collections;
 using UnityEngine;
 using Valve.OpenVR;
-using static MelonLoader.MelonLogger;
 
 [assembly: MelonInfo(typeof(FullBodyBending.Core), "FullBodyBending", "1.0.0", "Orangenal", null)]
 [assembly: MelonGame("Buckethead Entertainment", "RUMBLE")]
@@ -85,10 +85,16 @@ namespace FullBodyBending
             yield break;
         }
 
+        public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
+        {
+            foreach (string key in TrackerManager.trackers.Keys)
+            {
+                TrackerManager.trackers[key] = null;
+            }
+        }
+
         public void OnSceneWasLoaded(string sceneName)
         {
-            TrackerManager.trackerCount = TrackerManager.trackers.Count; // TODO: REMOVE THIS REMOVE THIS REMOVE THIS REMOVE THIS
-            TrackerManager.trackers.Clear();
             TrackerManager.initCount = 0;
 
             if (sceneName is not ("Gym" or "Park")) return;
@@ -115,7 +121,7 @@ namespace FullBodyBending
                 }
             }
 
-            if (TrackerManager.trackerCount > 0 && system != null)
+            if (TrackerManager.trackers.Count > 0 && system != null)
             {
                 TrackerManager.InitLocalTrackers();
                 MelonLogger.Msg("Trackers");
@@ -290,6 +296,7 @@ namespace FullBodyBending
                 {
                     GameObject trackerObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                     OpenVRTracker tracker = trackerObject.AddComponent<OpenVRTracker>();
+                    tracker.isVisible = true;
                     tracker.playerController = Calls.Players.GetLocalPlayer().Controller;
                     tracker.trackerIndex = i;
 
@@ -301,6 +308,16 @@ namespace FullBodyBending
             if (TrackerManager.storedOffsets.Count == 0)
             {
                 Core.loggerInstance.Warning("Trackers have not been calibrated! Please T-Pose to calibrate.");
+
+                Il2CppSystem.Nullable<int> nullInt = new Il2CppSystem.Nullable<int>();
+                SlabManager.instance.SpawnNotificationSlab("Hey there! It looks like this is your first time using Full-Body Bending! Please T-Pose to calibrate your trackers.", out nullInt, ControllerType.Local, null);
+            }
+            else if (!trackers.Keys.All(storedOffsets.ContainsKey))
+            {
+                Core.loggerInstance.Warning("Not all trackers have been calibrated! Please T-Pose to calibrate.");
+
+                Il2CppSystem.Nullable<int> nullInt = new Il2CppSystem.Nullable<int>();
+                SlabManager.instance.SpawnNotificationSlab("Hey there! It seems that not all of your trackers have been calibrated! Please T-Pose to calibrate your trackers.", out nullInt, ControllerType.Local, null);
             }
 
             if (inGym) return;
@@ -472,7 +489,19 @@ namespace FullBodyBending
         public uint trackerIndex;
         public PlayerController playerController;
         public Transform originalBone;
-        public bool isVisible = true;
+
+        private MeshRenderer meshRenderer = null;
+        private bool _isVisible = false;
+        public bool isVisible
+        {
+            get => _isVisible;
+            set
+            {
+                _isVisible = value;
+                if (meshRenderer == null) meshRenderer = GetComponent<MeshRenderer>();
+                meshRenderer.enabled = _isVisible;
+            }
+        }
 
         // Set in Start()
         public string controllerType;
@@ -549,8 +578,6 @@ namespace FullBodyBending
             playerIK.enabled = true;
             vrik.enabled = true;
 
-            animator.speed = 0;
-
             yield break;
         }
 
@@ -621,13 +648,12 @@ namespace FullBodyBending
             bool isLoader = Calls.Scene.GetSceneName() == "Loader";
             transform.SetParent(playerController.PlayerVR.transform);
             transform.localPosition = Vector3.zero;
+            transform.localScale = Vector3.one * Core.debugTrackerSize;
             Destroy(GetComponent<SphereCollider>());
-            if (isVisible)
-            {
-                GetComponent<MeshRenderer>().material.shader = Shader.Find("Universal Render Pipeline/Unlit");
-                transform.localScale = Vector3.one * Core.debugTrackerSize;
-            }
-            else Destroy(GetComponent<MeshRenderer>());
+
+            meshRenderer = GetComponent<MeshRenderer>();
+            meshRenderer.material.shader = Shader.Find("Universal Render Pipeline/Unlit");
+            meshRenderer.enabled = isVisible;
 
             System.Text.StringBuilder sb = new(64);
             ETrackedPropertyError error = new();
@@ -700,11 +726,14 @@ namespace FullBodyBending
                 photonView.ObservedComponents.Add(networkGameObject);
             }
 
-            TrackerManager.trackers.Add(trackerName, this);
+            if (TrackerManager.trackers.ContainsKey(trackerName))
+                TrackerManager.trackers[trackerName] = this;
+            else
+                TrackerManager.trackers.Add(trackerName, this);
             TrackerManager.initCount--;
         }
     }
-
+    
     [HarmonyPatch(typeof(BootLoaderPlayer), nameof(BootLoaderPlayer.Start))]
     public static class LoaderStartPatch
     {
@@ -725,7 +754,7 @@ namespace FullBodyBending
             }
         }
     }
-
+    /*
     [HarmonyPatch(typeof(BootLoaderMeasurementSystem), nameof(BootLoaderMeasurementSystem.DoMeasurement))]
     public static class LoaderTPosePatch
     {
@@ -802,7 +831,7 @@ namespace FullBodyBending
             MelonCoroutines.Start(WaitToCalibrate(skelHeadOriginalPos, prefabSkeleton, localPlayer));
         }
     }
-
+    
     [HarmonyPatch(typeof(PlayerData), nameof(PlayerData.SetMeasurement))]
     public static class LoaderSkipperCompatPatch
     {
@@ -814,11 +843,11 @@ namespace FullBodyBending
             }
         }
     }
-
+    */
     [HarmonyPatch(typeof(PlayerScaling), nameof(PlayerScaling.OnMeasureTimerEnd))]
     public static class LoadedTPosePatch
     {
-        internal static IEnumerator WaitToCalibrate(Vector3 skelHeadOriginalPos, Transform skeleton)
+        private static IEnumerator WaitToCalibrate(Vector3 skelHeadOriginalPos, Transform skeleton)
         {
             yield return new WaitForEndOfFrame();
 
@@ -876,12 +905,12 @@ namespace FullBodyBending
         }
         private static void Postfix()
         {
+            if (Calls.Scene.GetSceneName() is "Map0" or "Map1" || TrackerManager.trackers.Count == 0) return;
             MelonLogger.Msg("T-Pose detected!");
 
             TrackerManager.trackerCount = TrackerManager.trackers.Count; // We're assuming the player doesn't connect or disconnect any trackers while the game is running
-            if (TrackerManager.trackerCount > 0)
-                Core.loggerInstance.Msg("Calibrating FBT...");
-            else return; // We don't need to calibrate what's not there
+            
+            Core.loggerInstance.Msg("Calibrating FBT...");
 
             PlayerController localPlayer = Calls.Players.GetLocalPlayerController();
             PlayerIK playerIK = localPlayer.PlayerIK;
